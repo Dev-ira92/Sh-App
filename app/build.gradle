@@ -1,0 +1,42 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.shadow.society.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.shadow.society.app"
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+        ndk { abiFilters 'armeabi-v7a', 'arm64-v8a' }
+    }
+    buildTypes {
+        release { minifyEnabled false }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = '17' }
+    lint { abortOnError false }
+    packaging {
+        resources {
+            excludes += ['META-INF/versions/9/OSGI-INF/MANIFEST.MF', 'META-INF/DEPENDENCIES']
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'net.zetetic:android-database-sqlcipher:4.5.4'
+    implementation 'androidx.sqlite:sqlite:2.4.0'
+    implementation 'org.bouncycastle:bcprov-jdk18on:1.77'
+    implementation 'com.google.zxing:core:3.5.2'
+    implementation 'com.scottyab:rootbeer-lib:0.1.0'
+}
