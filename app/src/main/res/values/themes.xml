@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.ShSo" parent="Theme.AppCompat.NoActionBar">
+        <item name="colorPrimary">#000000</item>
+        <item name="colorPrimaryDark">#000000</item>
+        <item name="colorAccent">#00FF41</item>
+        <item name="colorControlNormal">#008F11</item>
+        <item name="android:windowBackground">#000000</item>
+        <item name="android:statusBarColor">#000000</item>
+        <item name="android:navigationBarColor">#000000</item>
+        <item name="android:textColorPrimary">#00FF41</item>
+        <item name="alertDialogTheme">@style/Theme.ShSo.Alert</item>
+    </style>
+    <style name="Theme.ShSo.Alert" parent="Theme.AppCompat.Dialog.Alert">
+        <item name="android:windowBackground">#0A0F0A</item>
+        <item name="android:textColorPrimary">#00FF41</item>
+        <item name="android:textColorSecondary">#008F11</item>
+        <item name="colorAccent">#00FF41</item>
+    </style>
+</resources>
