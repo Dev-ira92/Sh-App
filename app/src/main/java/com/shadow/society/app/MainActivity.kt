@@ -1,23 +1,27 @@
 package com.shadow.society.app
 
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.text.InputType
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 
 /**
- * Login / vault creation.
- * The LOGIN PASSPHRASE only opens the vault (it derives the database key) and is never shared.
- * MY KEY is a different secret: you give it to your friends in person; it is part of every AES key.
+ * 1) App lock: phone fingerprint / face / pattern / PIN (only if set up on the phone).
+ * 2) Login / vault creation. The LOGIN PASSPHRASE only opens the vault (it derives the database key).
+ *    MY KEY is a different secret: you give it to your friends; it is part of every AES key.
  */
 class MainActivity : AppCompatActivity() {
     private val ui = Handler(Looper.getMainLooper())
@@ -25,6 +29,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var confirm: EditText
     private lateinit var go: Button
     private lateinit var status: TextView
+    private var gateMsg: TextView? = null
     private var first = false
     private var chosenKey = Crypto.randomKey(64)
     private val keyLens = intArrayOf(10, 50, 100, 500, 1000)
@@ -47,7 +52,52 @@ class MainActivity : AppCompatActivity() {
         }
         if (SessionVault.isUnlocked()) { openList(); return }
         first = !Vault.exists(this)
+        if (!first && AppLock.enabled(this) && AppLock.available(this) && !AppLock.recentlyOk()) showGate() else buildLogin()
+    }
 
+    private fun pulse(v: View) {
+        val a = ObjectAnimator.ofFloat(v, "alpha", 0.45f, 1f)
+        a.duration = 1400
+        a.repeatCount = ValueAnimator.INFINITE
+        a.repeatMode = ValueAnimator.REVERSE
+        a.start()
+    }
+
+    private fun logo(size: Int): ImageView {
+        val iv = ImageView(this)
+        iv.setImageDrawable(Icons.drawable(this, "shield", Neo.ACCENT, size, 1f))
+        pulse(iv)
+        return iv
+    }
+
+    // ---------- step 1: app lock ----------
+    private fun showGate() {
+        val col = Neo.vertical(this)
+        col.gravity = Gravity.CENTER
+        val pad = Neo.dp(this, 24)
+        col.setPadding(pad, pad, pad, pad)
+        col.addView(logo(88))
+        val title = Neo.glow(Neo.text(this, "Sh-So", 32, Neo.ACCENT))
+        title.typeface = Neo.BOLD
+        title.gravity = Gravity.CENTER
+        Neo.add(col, title, 12)
+        val msg = Neo.text(this, tr("Verify it's you", "هویت خود را تأیید کنید"), 14, Neo.DIM)
+        msg.gravity = Gravity.CENTER
+        gateMsg = msg
+        Neo.add(col, msg, 8)
+        val retry = Neo.button(this, tr("Unlock", "باز کردن"))
+        Neo.add(col, retry, 24)
+        retry.setOnClickListener { askGate() }
+        setContentView(Neo.backdrop(this, col, 0.8f))
+        askGate()
+    }
+
+    private fun askGate() {
+        AppLock.prompt(this, { buildLogin() }, { m -> gateMsg?.text = "> $m" })
+    }
+
+    // ---------- step 2: passphrase ----------
+    private fun buildLogin() {
         val sv = ScrollView(this)
         sv.isFillViewport = true
         val wrap = LinearLayout(this)
@@ -60,7 +110,12 @@ class MainActivity : AppCompatActivity() {
         card.background = Neo.box(this, Neo.withAlpha(Neo.BG, 0xDD), Neo.DIM, 10)
         card.setPadding(pad, pad, pad, pad)
 
-        val title = Neo.text(this, "Sh-So", 36, Neo.ACCENT)
+        val lg = logo(56)
+        card.addView(lg, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+        })
+
+        val title = Neo.glow(Neo.text(this, "Sh-So", 36, Neo.ACCENT))
         title.typeface = Neo.BOLD
         title.gravity = Gravity.CENTER
         card.addView(title)
@@ -77,8 +132,8 @@ class MainActivity : AppCompatActivity() {
         confirm.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         if (first) {
             Neo.add(card, confirm, 8)
-            Neo.add(card, Neo.text(this, tr("MY KEY — give it to your friends in person (this is NOT your login password)",
-                "کلید من — حضوری به دوستانت بده (این رمز ورود نیست)"), 12, Neo.DIM), 18)
+            Neo.add(card, Neo.text(this, tr("MY KEY — created for you now. Give it to your friends (this is NOT your login password).",
+                "کلید من — همین حالا برایت ساخته شد. به دوستانت بده (این رمز ورود نیست)."), 12, Neo.DIM), 18)
             keyView = Neo.text(this, chosenKey, 12, Neo.TEXT)
             keyView.setTextIsSelectable(true)
             Neo.add(card, keyView, 4)
