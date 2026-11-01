@@ -11,6 +11,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import java.io.File
 
 class SettingsActivity : BaseActivity() {
     private val keyLengths = intArrayOf(10, 50, 100, 500, 1000)
@@ -22,6 +23,7 @@ class SettingsActivity : BaseActivity() {
     private lateinit var pulseBtn: Button
     private lateinit var lockBtn: Button
     private lateinit var lockdownBtn: Button
+    private lateinit var appLockBtn: Button
     private lateinit var duress: EditText
 
     private fun lockLabel(s: Int): String =
@@ -43,7 +45,7 @@ class SettingsActivity : BaseActivity() {
         val bp = Neo.dp(this, 4)
         bar.setPadding(bp, bp, bp, bp)
         bar.addView(Icons.button(this, "back", Neo.BARTEXT) { finish() })
-        val title = Neo.text(this, tr("Settings", "تنظیمات"), 18, Neo.BARTEXT)
+        val title = Neo.glow(Neo.text(this, tr("Settings", "تنظیمات"), 18, Neo.BARTEXT))
         title.typeface = Neo.BOLD
         bar.addView(title)
         outer.addView(bar)
@@ -98,15 +100,57 @@ class SettingsActivity : BaseActivity() {
             applyAndRebuild()
         }
 
+        // ---- App lock ----
+        col.addView(Neo.section(this, tr("APP LOCK", "قفل برنامه")))
+        col.addView(Neo.text(this, tr("Fingerprint, face, pattern, PIN or password of your phone, asked before the login screen. The login passphrase is still required.",
+            "اثر انگشت، چهره، الگو، پین یا رمز گوشی، پیش از صفحه‌ی ورود پرسیده می‌شود. رمز ورود برنامه هم همچنان لازم است."), 12, Neo.DIM))
+        appLockBtn = Neo.button(this, "")
+        Neo.add(col, appLockBtn, 8)
+        appLockBtn.setOnClickListener {
+            if (!AppLock.available(this)) {
+                Dialogs.info(this, tr("Not available", "در دسترس نیست"),
+                    tr("Set a screen lock (PIN, pattern, fingerprint or face) in your phone settings first.",
+                        "اول در تنظیمات گوشی، قفل صفحه (پین، الگو، اثر انگشت یا چهره) را فعال کنید."))
+            } else {
+                AppLock.prompt(this, {
+                    Prefs.putInt(this, "applock", if (AppLock.enabled(this)) 0 else 1)
+                    refresh()
+                }, { })
+            }
+        }
+
         // ---- My key ----
-        col.addView(Neo.section(this, tr("MY KEY (give it to your friend in person)", "کلید من (حضوری به دوستت بده)")))
+        col.addView(Neo.section(this, tr("MY KEY (give it to your friend)", "کلید من (به دوستت بده)")))
         keyView = Neo.text(this, "", 12, Neo.TEXT)
         keyView.setTextIsSelectable(true)
         col.addView(keyView)
         qr = ImageView(this)
         Neo.add(col, qr, 10)
+
+        val shareBtn = Neo.button(this, tr("Send my key…", "ارسال کلید من…"))
+        Neo.add(col, shareBtn, 10)
+        shareBtn.setOnClickListener {
+            val labels = arrayOf(tr("QR image (PNG)", "تصویر QR (PNG)"), tr("JSON file", "فایل JSON"), tr("TXT file", "فایل TXT"))
+            Dialogs.choose(this, tr("Send my key as", "ارسال کلید به صورت"), labels, -1) { w ->
+                Dialogs.confirm(this, tr("This file contains your KEY. Send it only to the person you will talk with, then agree on the verbal code in person.",
+                    "این فایل «کلید من» را دارد. فقط به همان مخاطب بفرست و کد شفاهی را حضوری با او هماهنگ کن.")) {
+                    val k = Vault.myKey(this)
+                    val f: File? = when (w) {
+                        0 -> Files.exportKeyPng(this, k)
+                        1 -> Files.exportKeyJson(this, k)
+                        else -> Files.exportKeyTxt(this, k)
+                    }
+                    if (f == null) {
+                        Toast.makeText(this, tr("Could not create the file", "ساخت فایل ناموفق بود"), Toast.LENGTH_SHORT).show()
+                    } else {
+                        Files.share(this, f, if (w == 0) "image/png" else if (w == 1) "application/json" else "text/plain")
+                    }
+                }
+            }
+        }
+
         val regen = Neo.button(this, tr("🎲 generate new key", "🎲 ساخت کلید جدید"))
-        Neo.add(col, regen, 10)
+        Neo.add(col, regen, 8)
         regen.setOnClickListener {
             val labels = Array(keyLengths.size) {
                 keyLengths[it].toString() + " " + tr("characters", "کاراکتر") + (if (keyLengths[it] < 50) "  ⚠" else "")
@@ -196,6 +240,9 @@ class SettingsActivity : BaseActivity() {
         lockBtn.text = tr("lock: ", "قفل: ") + lockLabel(Prefs.int(this, "autolock", 60))
         lockdownBtn.text = if (Lockdown.isOn(this)) tr("lockdown: ON — tap to disable", "حالت قفل: روشن")
                            else tr("lockdown: OFF — tap to enable", "حالت قفل: خاموش")
+        val state = if (!AppLock.available(this)) tr("not set up on phone", "روی گوشی فعال نیست")
+                    else if (AppLock.enabled(this)) tr("ON", "روشن") else tr("OFF", "خاموش")
+        appLockBtn.text = tr("App lock: ", "قفل برنامه: ") + state
     }
 
     private fun saveDuress() {
