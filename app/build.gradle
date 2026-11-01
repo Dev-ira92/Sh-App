@@ -9,13 +9,27 @@ android {
 
     defaultConfig {
         applicationId "com.shadow.society.app"
-        minSdk 21
+        minSdk 23
         targetSdk 34
-        versionCode 3
-        versionName "1.2"
-        ndk { abiFilters 'armeabi-v7a', 'arm64-v8a' }
+        versionCode 4
+        versionName "1.3"
+    }
+    signingConfigs {
+        shso {
+            if (project.hasProperty('shsoKeystore')) {
+                storeFile file(project.property('shsoKeystore'))
+                storePassword 'shso123456'
+                keyAlias 'shso'
+                keyPassword 'shso123456'
+            }
+        }
     }
     buildTypes {
+        debug {
+            if (project.hasProperty('shsoKeystore')) {
+                signingConfig signingConfigs.shso
+            }
+        }
         release { minifyEnabled false }
     }
     compileOptions {
