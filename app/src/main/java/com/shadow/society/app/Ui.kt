@@ -1,163 +1,45 @@
 package com.shadow.society.app
 
 import android.app.Activity
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
-import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.os.Bundle
 import android.text.InputType
 import android.text.format.DateFormat
 import android.util.Base64
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.view.inputmethod.EditorInfo
 import android.widget.AbsListView
 import android.widget.BaseAdapter
-import android.widget.Button
-import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.Switch
-import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.app.AppCompatActivity
 import java.util.Random
-
-/** Matrix theme + tiny view factories (the UI is built in code). */
-object Neo {
-    val BG = 0xFF000000.toInt()
-    val GREEN = 0xFF00FF41.toInt()
-    val DIM = 0xFF008F11.toInt()
-    val DARK = 0xFF031A06.toInt()
-    val PANEL = 0xFF0B0F0B.toInt()
-    val RED = 0xFFFF3B3B.toInt()
-    val MONO: Typeface = Typeface.MONOSPACE
-
-    fun dp(c: Context, v: Int): Int = (v * c.resources.displayMetrics.density).toInt()
-
-    fun text(c: Context, s: String, sp: Int, color: Int): TextView = TextView(c).apply {
-        text = s
-        textSize = sp.toFloat()
-        setTextColor(color)
-        typeface = MONO
-        textDirection = View.TEXT_DIRECTION_FIRST_STRONG
-    }
-
-    fun box(c: Context, fill: Int, stroke: Int, r: Int): GradientDrawable = GradientDrawable().apply {
-        setColor(fill)
-        setStroke(dp(c, 1), stroke)
-        cornerRadius = dp(c, r).toFloat()
-    }
-
-    fun input(c: Context, hint: String): EditText = EditText(c).apply {
-        this.hint = hint
-        setHintTextColor(DIM)
-        setTextColor(GREEN)
-        typeface = MONO
-        textSize = 15f
-        background = box(c, DARK, DIM, 4)
-        val p = dp(c, 10)
-        setPadding(p, p, p, p)
-        textDirection = View.TEXT_DIRECTION_FIRST_STRONG
-        highlightColor = 0x5500FF41
-        imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING   // keyboard must not learn
-        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-    }
-
-    fun button(c: Context, label: String): Button = Button(c).apply {
-        text = label
-        isAllCaps = false
-        setTextColor(GREEN)
-        typeface = MONO
-        background = box(c, BG, GREEN, 4)
-    }
-
-    fun iconButton(c: Context, glyph: String, onClick: (() -> Unit)? = null): Button = Button(c).apply {
-        text = glyph
-        isAllCaps = false
-        textSize = 18f
-        setTextColor(GREEN)
-        setBackgroundColor(0)
-        minWidth = 0
-        minimumWidth = 0
-        minHeight = 0
-        minimumHeight = 0
-        val p = dp(c, 8)
-        setPadding(p, p, p, p)
-        if (onClick != null) setOnClickListener { onClick() }
-    }
-
-    fun vertical(c: Context): LinearLayout = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
-
-    fun add(parent: LinearLayout, v: View, top: Int = 0) {
-        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        lp.topMargin = dp(parent.context, top)
-        parent.addView(v, lp)
-    }
-
-    fun section(c: Context, s: String): TextView = text(c, "// $s", 13, DIM).apply {
-        setPadding(0, dp(c, 22), 0, dp(c, 4))
-    }
-
-    fun copy(c: Context, s: String) {
-        (c.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
-            .setPrimaryClip(ClipData.newPlainText("Sh-So", s))
-        Toast.makeText(c, tr("Copied", "کپی شد"), Toast.LENGTH_SHORT).show()
-    }
-}
 
 object Dialogs {
     fun choose(c: Context, title: String, labels: Array<String>, sel: Int, cb: (Int) -> Unit) {
-        AlertDialog.Builder(c).setTitle(title)
+        Neo.dialog(c).setTitle(title)
             .setSingleChoiceItems(labels, sel) { d, w -> d.dismiss(); cb(w) }
             .setNegativeButton(tr("Cancel", "انصراف"), null).show()
     }
 
     fun confirm(c: Context, msg: String, yes: () -> Unit) {
-        AlertDialog.Builder(c).setMessage(msg)
+        Neo.dialog(c).setMessage(msg)
             .setPositiveButton(tr("Yes", "بله")) { _, _ -> yes() }
             .setNegativeButton(tr("Cancel", "انصراف"), null).show()
     }
 
     fun info(c: Context, title: String, msg: String) {
-        AlertDialog.Builder(c).setTitle(title).setMessage(msg).setPositiveButton("OK", null).show()
+        Neo.dialog(c).setTitle(title).setMessage(msg).setPositiveButton("OK", null).show()
     }
 }
 
-/** Every screen after login extends this: locked vault => back to login. */
-abstract class BaseActivity : AppCompatActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        if (!SessionVault.isUnlocked()) toLogin()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        if (isFinishing) return
-        SessionVault.checkPulse()
-        if (!SessionVault.isUnlocked()) { toLogin(); return }
-        onReady()
-    }
-
-    protected abstract fun onReady()
-
-    private fun toLogin() {
-        startActivity(Intent(this, MainActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK))
-        finish()
-    }
-}
-
-/** Falling green code. */
+/** Falling green code (Matrix theme). */
 class MatrixRainView(c: Context) : View(c) {
     private val g = "ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉ0123456789:=*+<>|"
     private val glyph = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.MONOSPACE }
@@ -227,29 +109,38 @@ class ContactAdapter(private val ctx: Context) : BaseAdapter() {
         }
         val oval = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
-            setColor(Neo.DARK)
-            setStroke(Neo.dp(ctx, 1), Neo.GREEN)
+            setColor(Neo.ACCENT)
         }
-        val avatar = Neo.text(ctx, c.name.take(1).uppercase(), 20, Neo.GREEN).apply {
+        val avatar = Neo.text(ctx, c.name.take(1).uppercase(), 20, Neo.P.onAccent).apply {
             gravity = Gravity.CENTER
             background = oval
+            typeface = Neo.BOLD
         }
-        val s = Neo.dp(ctx, 46)
+        val s = Neo.dp(ctx, 50)
         row.addView(avatar, LinearLayout.LayoutParams(s, s))
-        val col = Neo.vertical(ctx).apply { setPadding(Neo.dp(ctx, 12), 0, Neo.dp(ctx, 8), 0) }
-        col.addView(Neo.text(ctx, c.name, 16, Neo.GREEN))
+        val col = Neo.vertical(ctx).apply { setPadding(Neo.dp(ctx, 14), 0, Neo.dp(ctx, 8), 0) }
+        col.addView(Neo.text(ctx, c.name, 17, Neo.TEXT).apply { typeface = Neo.BOLD })
         col.addView(Neo.text(ctx, c.phone, 12, Neo.DIM))
         row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
         val u = unread[c.id] ?: 0
-        val lvl = if (c.level == 1) (if (SessionVault.key(c.id) != null) "🔓 " else "🔒 ") + "🔴" else "🟢"
-        row.addView(Neo.text(ctx, (if (u > 0) "[$u] " else "") + lvl, 14, Neo.GREEN))
+        if (u > 0) {
+            val pill = Neo.text(ctx, "$u", 12, Neo.P.onAccent).apply {
+                background = Neo.box(ctx, Neo.ACCENT, Neo.ACCENT, 12)
+                setPadding(Neo.dp(ctx, 8), Neo.dp(ctx, 2), Neo.dp(ctx, 8), Neo.dp(ctx, 2))
+            }
+            row.addView(pill)
+        }
+        val lvl = if (c.level == 1) (if (SessionVault.key(c.id) != null) "🔓" else "🔒") + "🔴" else "🟢"
+        row.addView(Neo.text(ctx, "  $lvl", 14, Neo.TEXT))
         return row
     }
 }
 
 /**
- * Fire messages are stored as ciphertext. If the key in RAM matches (same keys, verbal code,
- * method and formula on both sides) the text is decrypted. Otherwise ONLY the raw text is shown.
+ * Telegram-style bubbles. Mine: right side, theme color. Friend: left side.
+ * Fire messages are stored as ciphertext: if the session key in RAM matches (same keys, verbal code,
+ * method and formula on both sides) the text is decrypted; otherwise ONLY the raw text is shown.
  * Long-press a bubble to copy its text.
  */
 class MessageAdapter(private val ctx: Context) : BaseAdapter() {
@@ -262,13 +153,14 @@ class MessageAdapter(private val ctx: Context) : BaseAdapter() {
 
     override fun getView(pos: Int, v: View?, parent: ViewGroup?): View {
         val m = items[pos]
+        val pal = Neo.P
         val row = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             gravity = if (m.sent) Gravity.RIGHT else Gravity.LEFT
-            val p = Neo.dp(ctx, 8)
-            setPadding(p, Neo.dp(ctx, 4), p, Neo.dp(ctx, 4))
+            setPadding(Neo.dp(ctx, 10), Neo.dp(ctx, 3), Neo.dp(ctx, 10), Neo.dp(ctx, 3))
             layoutParams = AbsListView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
+
         var text = m.body
         var ok = true
         if (m.cipher) {
@@ -282,64 +174,50 @@ class MessageAdapter(private val ctx: Context) : BaseAdapter() {
             }
         }
         val shown = text
-        val color = if (m.sent) Neo.BG else if (ok) Neo.GREEN else Neo.DIM
-        val bubble = Neo.text(ctx, shown, 15, color).apply {
-            background = if (m.sent) Neo.box(ctx, Neo.GREEN, Neo.GREEN, 10) else Neo.box(ctx, Neo.DARK, Neo.DIM, 10)
-            val p = Neo.dp(ctx, 10)
-            setPadding(p, p, p, p)
-            maxWidth = (ctx.resources.displayMetrics.widthPixels * 0.8f).toInt()
-            setOnLongClickListener { Neo.copy(ctx, shown); true }
+        val fg = if (m.sent) pal.sentText else pal.recvText
+        val soft = Neo.withAlpha(fg, 170)
+
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = Neo.bubble(ctx, if (m.sent) pal.sent else pal.recv, m.sent)
+            setPadding(Neo.dp(ctx, 12), Neo.dp(ctx, 7), Neo.dp(ctx, 12), Neo.dp(ctx, 5))
         }
-        row.addView(bubble)
-        val stamp = (if (ok) "" else "🔒 ") + DateFormat.format("HH:mm  dd/MM", m.ts)
-        row.addView(Neo.text(ctx, stamp, 10, Neo.DIM))
+        val tv = Neo.text(ctx, shown, 15, if (ok) fg else Neo.withAlpha(fg, 150)).apply {
+            maxWidth = (ctx.resources.displayMetrics.widthPixels * 0.72f).toInt()
+        }
+        box.addView(tv)
+
+        val foot = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.RIGHT or Gravity.CENTER_VERTICAL
+        }
+        val tags = StringBuilder()
+        if (!ok) tags.append("🔒 ")
+        if ((m.tag and 1) != 0) tags.append("⬇ " + tr("imported", "وارد شده") + "  ")
+        if ((m.tag and 2) != 0) tags.append("⬆ " + tr("exported", "خروجی") + "  ")
+        if (tags.isNotEmpty()) foot.addView(Neo.text(ctx, tags.toString(), 10, soft))
+        foot.addView(Neo.text(ctx, DateFormat.format("HH:mm", m.ts).toString(), 10, soft))
+        if (m.sent) {
+            val st: Pair<String, Int> = when (m.status) {
+                0 -> Pair("  …", soft)
+                2 -> Pair("  ✗ " + tr("failed", "ناموفق"), pal.red)
+                3 -> Pair("  ✓✓", fg)
+                else -> Pair("  ✓", soft)
+            }
+            foot.addView(Neo.text(ctx, st.first, 11, st.second))
+        }
+        box.addView(foot)
+
+        val copy = View.OnLongClickListener { Neo.copy(ctx, shown); true }
+        box.setOnLongClickListener(copy)
+        tv.setOnLongClickListener(copy)
+        row.addView(box)
         return row
     }
 }
 
-fun showAddContact(a: Activity, ex: Contact?, done: () -> Unit) {
-    val col = Neo.vertical(a)
-    val p = Neo.dp(a, 20)
-    col.setPadding(p, p / 2, p, 0)
-    val name = Neo.input(a, tr("name", "نام"))
-    val phone = Neo.input(a, tr("phone number", "شماره تلفن")).apply { inputType = InputType.TYPE_CLASS_PHONE }
-    val fire = Switch(a).apply {
-        text = tr("🔴 Fire level (encrypted)", "🔴 سطح آتش (رمزنگاری‌شده)")
-        setTextColor(Neo.GREEN)
-    }
-    Neo.add(col, name)
-    Neo.add(col, phone, 8)
-    Neo.add(col, fire, 14)
-    if (ex != null) { name.setText(ex.name); phone.setText(ex.phone); fire.isChecked = ex.level == 1 }
-
-    val d = AlertDialog.Builder(a)
-        .setTitle(if (ex == null) tr("New contact", "مخاطب جدید") else tr("Edit contact", "ویرایش مخاطب"))
-        .setView(col)
-        .setPositiveButton(tr("Save", "ذخیره"), null)
-        .setNegativeButton(tr("Cancel", "انصراف"), null)
-        .create()
-    d.show()
-    d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-        val n = name.text.toString().trim()
-        val ph = phone.text.toString().trim()
-        if (n.isEmpty() || ph.isEmpty()) {
-            Toast.makeText(a, tr("name and number required", "نام و شماره لازم است"), Toast.LENGTH_SHORT).show()
-        } else {
-            val level = if (fire.isChecked) 1 else 0
-            val ok = if (ex == null) Contacts.insert(a, Contact(0, n, ph, level, 0)) > 0
-                     else Contacts.update(a, Contact(ex.id, n, ph, level, ex.createdAt))
-            if (!ok) {
-                Toast.makeText(a, tr("number already exists", "این شماره قبلاً ثبت شده"), Toast.LENGTH_SHORT).show()
-            } else {
-                d.dismiss()
-                done()
-            }
-        }
-    }
-}
-
-/** Build the session key: My Key (automatic) + Friend Key + Verbal code, combined with the chosen method. */
-fun showUnlock(a: Activity, c: Contact, done: () -> Unit) {
+/** Build the session key: My Key (automatic) + Friend Key (type or scan QR) + Verbal code + chosen method. */
+fun showUnlock(a: Activity, c: Contact, scan: ((String) -> Unit) -> Unit, done: () -> Unit) {
     val sv = ScrollView(a)
     val col = Neo.vertical(a)
     val p = Neo.dp(a, 20)
@@ -348,6 +226,13 @@ fun showUnlock(a: Activity, c: Contact, done: () -> Unit) {
         inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         minLines = 2
     }
+    val frow = LinearLayout(a).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+    }
+    frow.addView(friend, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+    frow.addView(Icons.button(a, "scan", Neo.ACCENT) { scan { friend.setText(it) } })
+
     val verbal = Neo.input(a, tr("verbal code (2-3 words)", "کد شفاهی (۲-۳ کلمه)"))
     val formula = Neo.input(a, tr("mixer formula", "فرمول اختلاط")).apply { setText(KeyMixer.DEFAULT_FORMULA) }
     val descView = Neo.text(a, "", 11, Neo.DIM)
@@ -366,21 +251,21 @@ fun showUnlock(a: Activity, c: Contact, done: () -> Unit) {
     }
     refresh()
 
-    Neo.add(col, friend)
+    Neo.add(col, frow)
     Neo.add(col, verbal, 8)
     Neo.add(col, mBtn, 8)
     Neo.add(col, descView, 2)
     Neo.add(col, formula, 8)
     sv.addView(col)
 
-    val d = AlertDialog.Builder(a)
+    val d = Neo.dialog(a)
         .setTitle("🔑 " + c.name)
         .setView(sv)
         .setPositiveButton(tr("Derive", "ساخت کلید"), null)
         .setNegativeButton(tr("Cancel", "انصراف"), null)
         .create()
     d.show()
-    d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { btn ->
+    d.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener { btn ->
         val f = friend.text.toString()
         val vb = verbal.text.toString()
         val fm = formula.text.toString()
@@ -413,46 +298,31 @@ fun showUnlock(a: Activity, c: Contact, done: () -> Unit) {
     }
 }
 
-/** Paste raw "TXT|..." lines from the SMS app, or a raw Base64 ciphertext copied from a bubble. */
+/** Paste raw "TXT|..." lines, a SHSO1 export, or a Base64 ciphertext copied from a bubble. */
 fun showReceive(a: Activity, c: Contact, done: () -> Unit) {
     val col = Neo.vertical(a)
     val p = Neo.dp(a, 20)
     col.setPadding(p, p / 2, p, 0)
-    val e = Neo.input(a, "TXT|a1b2c3d4|0|2|...   /   base64").apply {
+    val e = Neo.input(a, "TXT|a1b2c3d4|0|2|...   /   SHSO1|...   /   base64").apply {
         inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         minLines = 5
         gravity = Gravity.TOP
     }
     Neo.add(col, e)
-    val d = AlertDialog.Builder(a)
-        .setTitle("📥 " + tr("Import received text", "دریافت دستی متن"))
+    val d = Neo.dialog(a)
+        .setTitle(tr("Import pasted text", "ایمپورت متن paste‌شده"))
         .setView(col)
         .setPositiveButton(tr("Import", "وارد کن"), null)
         .setNegativeButton(tr("Close", "بستن"), null)
         .create()
     d.show()
-    d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-        var n = 0
-        val b64 = Regex("[A-Za-z0-9+/=]+")
-        for (line in e.text.toString().lines()) {
-            val t = line.trim()
-            if (t.isEmpty()) continue
-            if (Codec.parse(t) != null) {
-                Spool.add(a, c.phone, System.currentTimeMillis(), t)
-                n++
-            } else if (t.length >= 40 && b64.matches(t)) {
-                try {
-                    Codec.encode(byteArrayOf(1) + Base64.decode(t, Base64.NO_WRAP))
-                        .forEach { Spool.add(a, c.phone, System.currentTimeMillis(), it) }
-                    n++
-                } catch (ex: Exception) { }
-            }
-        }
+    d.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+        val txt = e.text.toString()
         d.dismiss()
         Thread {
-            val stored = Inbox.drain(a)
+            val r = Files.importText(a, c, txt, true)
             a.runOnUiThread {
-                Toast.makeText(a, "$n → $stored", Toast.LENGTH_SHORT).show()
+                Toast.makeText(a, tr("Imported: ", "وارد شد: ") + r.imported, Toast.LENGTH_LONG).show()
                 done()
             }
         }.start()
