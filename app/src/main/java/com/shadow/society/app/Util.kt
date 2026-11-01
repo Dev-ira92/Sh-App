@@ -21,10 +21,6 @@ import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import com.scottyab.rootbeer.RootBeer
-import java.util.Locale
-
-/** Persian by default, English if the phone language is English. */
-fun tr(en: String, fa: String): String = if (Locale.getDefault().language == "en") en else fa
 
 object Prefs {
     private fun sp(c: Context) = c.applicationContext.getSharedPreferences("shso", Context.MODE_PRIVATE)
