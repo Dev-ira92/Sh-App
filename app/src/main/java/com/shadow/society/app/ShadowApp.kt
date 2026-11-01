@@ -9,7 +9,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.view.WindowManager
 
-/** App-wide policy: FLAG_SECURE everywhere, auto-lock after leaving the app, hide from Recents in Lockdown. */
+/** App-wide policy: theme load, FLAG_SECURE everywhere, auto-lock after leaving the app, Lockdown. */
 class ShadowApp : Application(), Application.ActivityLifecycleCallbacks {
     private var started = 0
     private var leftAt = 0L
@@ -20,6 +20,7 @@ class ShadowApp : Application(), Application.ActivityLifecycleCallbacks {
 
     override fun onCreate() {
         super.onCreate()
+        Neo.load(this)
         registerActivityLifecycleCallbacks(this)
     }
 
