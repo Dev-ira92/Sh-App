@@ -5,15 +5,21 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.ColorFilter
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
+import android.graphics.Rect
+import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.text.InputType
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
@@ -21,6 +27,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -111,21 +118,47 @@ object Neo {
         textDirection = View.TEXT_DIRECTION_FIRST_STRONG
     }
 
+    /** Neon glow for titles (Matrix theme only). */
+    fun glow(t: TextView): TextView {
+        if (P.rain) t.setShadowLayer(14f, 0f, 0f, ACCENT)
+        return t
+    }
+
     fun box(c: Context, fill: Int, stroke: Int, r: Int): GradientDrawable = GradientDrawable().apply {
         setColor(fill)
         setStroke(dp(c, 1), stroke)
         cornerRadius = dp(c, r).toFloat()
     }
 
-    /** Telegram-style bubble: one small "tail" corner on the speaker's side. */
-    fun bubble(c: Context, fill: Int, sent: Boolean): GradientDrawable {
-        val big = dp(c, 14).toFloat()
-        val small = dp(c, 3).toFloat()
+    /** Chat bubble with a real tail and a soft gradient; Matrix gets a neon outline on the friend's side. */
+    fun bubble(c: Context, sent: Boolean): Drawable {
+        val base = if (sent) P.sent else P.recv
+        val c1 = ColorUtils.blendARGB(base, Color.WHITE, 0.10f)
+        val c2 = ColorUtils.blendARGB(base, Color.BLACK, 0.18f)
+        val stroke = if (P.rain && !sent) P.accent else 0
+        return BubbleDrawable(c1, c2, stroke, sent, dp(c, 16).toFloat(), dp(c, 7).toFloat())
+    }
+
+    /** Round avatar: neon ring in Matrix, otherwise a colour gradient picked from the name. */
+    fun avatar(c: Context, name: String): TextView {
+        val letter = name.trim().take(1).uppercase()
+        val tv = text(c, letter, 18, if (P.rain) ACCENT else Color.WHITE)
+        tv.gravity = Gravity.CENTER
+        tv.typeface = BOLD
         val g = GradientDrawable()
-        g.setColor(fill)
-        g.cornerRadii = if (sent) floatArrayOf(big, big, big, big, small, small, big, big)
-                        else floatArrayOf(big, big, big, big, big, big, small, small)
-        return g
+        g.shape = GradientDrawable.OVAL
+        if (P.rain) {
+            g.setColor(P.recv)
+            g.setStroke(dp(c, 2), ACCENT)
+        } else {
+            val hue = (((name.hashCode() % 360) + 360) % 360).toFloat()
+            g.orientation = GradientDrawable.Orientation.TL_BR
+            g.colors = intArrayOf(
+                Color.HSVToColor(floatArrayOf(hue, 0.55f, 0.95f)),
+                Color.HSVToColor(floatArrayOf((hue + 40f) % 360f, 0.70f, 0.70f)))
+        }
+        tv.background = g
+        return tv
     }
 
     fun input(c: Context, hint: String): EditText = EditText(c).apply {
@@ -195,15 +228,71 @@ object Neo {
     }
 }
 
-/** A line icon drawn from a tiny path (24x24 grid), tinted and sized from Settings. */
-class IconDrawable(private val path: Path, tint: Int, private val px: Int) : Drawable() {
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+/** Speech bubble drawn from a path: rounded body + small tail, gradient fill, optional neon outline. */
+class BubbleDrawable(
+    private val c1: Int, private val c2: Int, private val stroke: Int,
+    private val sent: Boolean, private val rad: Float, private val tailW: Float
+) : Drawable() {
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private val path = Path()
+
+    override fun onBoundsChange(bounds: Rect) {
+        super.onBoundsChange(bounds)
+        path.reset()
+        val w = bounds.width().toFloat()
+        val h = bounds.height().toFloat()
+        if (w <= 0f || h <= 0f) return
+        val l = if (sent) 0f else tailW
+        val r = if (sent) w - tailW else w
+        val rr = minOf(rad, h / 2f, (r - l) / 2f)
+        val radii = if (sent) floatArrayOf(rr, rr, rr, rr, 0f, 0f, rr, rr)
+                    else floatArrayOf(rr, rr, rr, rr, rr, rr, 0f, 0f)
+        path.addRoundRect(RectF(l, 0f, r, h), radii, Path.Direction.CW)
+        val t = Path()
+        val th = tailW * 1.7f
+        if (sent) {
+            t.moveTo(r, h - th); t.lineTo(w, h); t.lineTo(r - tailW, h)
+        } else {
+            t.moveTo(l, h - th); t.lineTo(0f, h); t.lineTo(l + tailW, h)
+        }
+        t.close()
+        path.op(t, Path.Op.UNION)
+        path.offset(bounds.left.toFloat(), bounds.top.toFloat())
+        fill.shader = LinearGradient(bounds.left.toFloat(), bounds.top.toFloat(),
+            bounds.right.toFloat(), bounds.bottom.toFloat(), c1, c2, Shader.TileMode.CLAMP)
+    }
+
+    override fun draw(canvas: Canvas) {
+        canvas.drawPath(path, fill)
+        if (stroke != 0) {
+            line.strokeWidth = 7f
+            line.color = Neo.withAlpha(stroke, 45)
+            canvas.drawPath(path, line)
+            line.strokeWidth = 2.5f
+            line.color = stroke
+            canvas.drawPath(path, line)
+        }
+    }
+
+    override fun setAlpha(alpha: Int) { fill.alpha = alpha }
+    override fun setColorFilter(cf: ColorFilter?) { fill.colorFilter = cf }
+    override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+}
+
+/** A line icon drawn from a tiny path (24x24 grid), tinted; "duo" icons also get a soft fill. */
+class IconDrawable(private val path: Path, tint: Int, private val px: Int, duo: Boolean) : Drawable() {
+    private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 2f
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
         color = tint
     }
+    private val fillP: Paint? = if (duo) Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Neo.withAlpha(tint, 70)
+    } else null
 
     override fun draw(canvas: Canvas) {
         val b = bounds
@@ -211,12 +300,13 @@ class IconDrawable(private val path: Path, tint: Int, private val px: Int) : Dra
         canvas.save()
         canvas.translate(b.left.toFloat(), b.top.toFloat())
         canvas.scale(s, s)
-        canvas.drawPath(path, paint)
+        fillP?.let { canvas.drawPath(path, it) }
+        canvas.drawPath(path, stroke)
         canvas.restore()
     }
 
-    override fun setAlpha(alpha: Int) { paint.alpha = alpha }
-    override fun setColorFilter(cf: ColorFilter?) { paint.colorFilter = cf }
+    override fun setAlpha(alpha: Int) { stroke.alpha = alpha }
+    override fun setColorFilter(cf: ColorFilter?) { stroke.colorFilter = cf }
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
     override fun getIntrinsicWidth(): Int = px
     override fun getIntrinsicHeight(): Int = px
@@ -237,8 +327,19 @@ object Icons {
         "exit" to "M10 4 H5 V20 H10 M15 8 L19 12 L15 16 M19 12 H9",
         "alert" to "M12 3 L22 20 H2 Z M12 10 V14 M12 17 V17.5",
         "back" to "M15 5 L8 12 L15 19",
-        "paste" to "M9 4 H15 V7 H9 Z M7 5 H5 V21 H19 V5 H17"
+        "paste" to "M9 4 H15 V7 H9 Z M7 5 H5 V21 H19 V5 H17",
+        "share" to "O18 5 3 O6 12 3 O18 19 3 M8.6 10.6 L15.4 6.4 M8.6 13.4 L15.4 17.6",
+        "qr" to "M4 4 H10 V10 H4 Z M14 4 H20 V10 H14 Z M4 14 H10 V20 H4 Z M14 14 H16 M18 14 H20 M14 17 H17 M19 17 H20 M14 20 H20",
+        "shield" to "M12 3 L20 6 V12 Q20 18 12 21 Q4 18 4 12 V6 Z M8.5 12 L11 14.5 L15.5 9.5",
+        "check" to "M5 12 L10 17 L19 7",
+        "check2" to "M1 13 L5 17 L13 8 M9 16.5 L11 18 L22 7",
+        "clock" to "O12 12 9 M12 7 V12 L15.5 14",
+        "cross" to "M6 6 L18 18 M18 6 L6 18",
+        "file" to "M6 3 H14 L19 8 V21 H6 Z M14 3 V8 H19 M9 13 H16 M9 17 H16",
+        "eye" to "M2 12 Q12 3 22 12 Q12 21 2 12 Z O12 12 3"
     )
+
+    private val DUO = setOf("send", "shield", "alert", "key", "file", "share", "eye", "qr")
 
     private fun parse(d: String): Path {
         val p = Path()
@@ -261,8 +362,14 @@ object Icons {
         return p
     }
 
-    fun drawable(c: Context, name: String, tint: Int): Drawable =
-        IconDrawable(parse(D[name] ?: "M0 0"), tint, (Neo.dp(c, 24) * Neo.isz).toInt())
+    fun drawable(c: Context, name: String, tint: Int, dpSize: Int = 24, scale: Float = Neo.isz): Drawable =
+        IconDrawable(parse(D[name] ?: "M0 0"), tint, (Neo.dp(c, dpSize) * scale).toInt(), DUO.contains(name))
+
+    fun view(c: Context, name: String, tint: Int, dpSize: Int, scale: Float): ImageView {
+        val v = ImageView(c)
+        v.setImageDrawable(drawable(c, name, tint, dpSize, scale))
+        return v
+    }
 
     fun button(c: Context, name: String, tint: Int, onClick: (() -> Unit)? = null): ImageButton {
         val b = ImageButton(c)
