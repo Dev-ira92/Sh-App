@@ -3,18 +3,60 @@ package com.shadow.society.app
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
 import androidx.core.content.FileProvider
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.BinaryBitmap
+import com.google.zxing.DecodeHintType
+import com.google.zxing.EncodeHintType
+import com.google.zxing.MultiFormatReader
+import com.google.zxing.RGBLuminanceSource
+import com.google.zxing.common.HybridBinarizer
+import com.google.zxing.qrcode.QRCodeWriter
+import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
+import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/** QR helpers: render (black on white, easy for any scanner) and decode from a picture. */
+object QrTools {
+    fun render(text: String, px: Int, white: Boolean): Bitmap? = try {
+        val hints = mapOf<EncodeHintType, Any>(
+            EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.L,
+            EncodeHintType.MARGIN to 4,
+            EncodeHintType.CHARACTER_SET to "UTF-8")
+        val m = QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, px, px, hints)
+        val w = m.width
+        val h = m.height
+        val dark = 0xFF000000.toInt()
+        val light = if (white) 0xFFFFFFFF.toInt() else 0xFF00FF41.toInt()
+        val pix = IntArray(w * h) { i -> if (m.get(i % w, i / w)) dark else light }
+        Bitmap.createBitmap(pix, w, h, Bitmap.Config.ARGB_8888)
+    } catch (e: Exception) { null }
+
+    fun decode(bmp: Bitmap): String? = try {
+        val w = bmp.width
+        val h = bmp.height
+        val px = IntArray(w * h)
+        bmp.getPixels(px, 0, w, 0, 0, w, h)
+        val hints = mapOf<DecodeHintType, Any>(
+            DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE),
+            DecodeHintType.TRY_HARDER to true)
+        MultiFormatReader().decode(BinaryBitmap(HybridBinarizer(RGBLuminanceSource(w, h, px))), hints).text
+    } catch (t: Throwable) { null }
+}
+
 /**
- * Export / import of messages as .txt files.
- * Raw file line:  SHSO1|time|S or R|base64([mode][data])   (S = written by the file's author)
+ * Export / import of messages and keys as files.
+ * Raw message line:  SHSO1|time|S or R|base64([mode][data])   (S = written by the file's author)
  * Fire messages stay encrypted inside raw files; only someone with the same session key can read them.
+ * Key file:  TXT line "SHSOKEY1|key"  /  JSON {"app":"Sh-So","type":"key","key":"..."}  /  PNG of the QR code.
  */
 object Files {
     private const val DIR = "exports"
@@ -38,6 +80,75 @@ object Files {
         return File(d, "ShSo-$name-$stamp.txt")
     }
 
+    private fun namedFile(c: Context, name: String): File {
+        val d = File(c.cacheDir, DIR)
+        d.deleteRecursively()
+        d.mkdirs()
+        return File(d, name)
+    }
+
+    // ---------- my key ----------
+    fun exportKeyTxt(c: Context, key: String): File {
+        val f = namedFile(c, "ShSo-key.txt")
+        f.writeText("# Sh-So key. Give it only to the person you will talk with.\nSHSOKEY1|$key\n")
+        return f
+    }
+
+    fun exportKeyJson(c: Context, key: String): File {
+        val j = JSONObject()
+        j.put("app", "Sh-So")
+        j.put("type", "key")
+        j.put("v", 1)
+        j.put("key", key)
+        j.put("created", System.currentTimeMillis())
+        val f = namedFile(c, "ShSo-key.json")
+        f.writeText(j.toString(2))
+        return f
+    }
+
+    fun exportKeyPng(c: Context, key: String): File? {
+        val bmp = QrTools.render(key, 900, true) ?: return null
+        val f = namedFile(c, "ShSo-key-qr.png")
+        FileOutputStream(f).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        return f
+    }
+
+    /** Finds a key in JSON, TXT ("SHSOKEY1|...") or a bare key string. */
+    fun parseKey(text: String): String? {
+        val t = text.trim()
+        if (t.startsWith("{")) {
+            try {
+                val k = JSONObject(t).optString("key").trim()
+                if (k.isNotEmpty()) return k
+            } catch (e: Exception) { }
+        }
+        for (line in t.lines()) {
+            val l = line.trim()
+            if (l.startsWith("SHSOKEY1|")) {
+                val k = l.substring(9).trim()
+                return if (k.isEmpty()) null else k
+            }
+        }
+        if (Regex("[A-Za-z0-9]{8,2000}").matches(t)) return t
+        return null
+    }
+
+    /** Reads a key from a chosen file: text/JSON, or a picture containing the QR code. */
+    fun readKey(c: Context, uri: Uri): String? {
+        val type = c.contentResolver.getType(uri) ?: ""
+        if (type.startsWith("image/")) {
+            val bmp = try {
+                c.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
+            } catch (t: Throwable) { null }
+            if (bmp == null) return null
+            val s = QrTools.decode(bmp) ?: return null
+            return parseKey(s)
+        }
+        val s = readUri(c, uri) ?: return null
+        return parseKey(s)
+    }
+
+    // ---------- messages ----------
     /** Whole chat in raw (encrypted) form. */
     fun exportRaw(c: Context, ct: Contact): Result {
         val key = SessionVault.key(ct.id)
@@ -95,10 +206,10 @@ object Files {
     }
 
     /** Opens the Android share sheet so you choose which app sends the file. */
-    fun share(a: Activity, f: File) {
+    fun share(a: Activity, f: File, mime: String = "text/plain") {
         val uri = FileProvider.getUriForFile(a, a.packageName + ".fileprovider", f)
         val i = Intent(Intent.ACTION_SEND)
-        i.type = "text/plain"
+        i.type = mime
         i.putExtra(Intent.EXTRA_STREAM, uri)
         i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         a.startActivity(Intent.createChooser(i, tr("Send with...", "ارسال با...")))
