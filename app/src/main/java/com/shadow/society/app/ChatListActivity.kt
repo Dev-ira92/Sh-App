@@ -26,16 +26,17 @@ class ChatListActivity : BaseActivity() {
         bar.gravity = Gravity.CENTER_VERTICAL
         bar.setBackgroundColor(Neo.PANEL)
         bar.setPadding(p, p / 3, p / 2, p / 3)
-        val title = Neo.text(this, "Sh-So", 22, Neo.BARTEXT)
+        val title = Neo.glow(Neo.text(this, "Sh-So", 22, Neo.BARTEXT))
         title.typeface = Neo.BOLD
         bar.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        bar.addView(Icons.button(this, "key", Neo.BARTEXT) { startActivity(Intent(this, KeyActivity::class.java)) })
         bar.addView(Icons.button(this, "tune", Neo.BARTEXT) { startActivity(Intent(this, SettingsActivity::class.java)) })
         val panicBtn = Icons.button(this, "alert", Neo.BARTEXT) {
             Toast.makeText(this, tr("hold to destroy everything", "برای نابودی همه‌چیز نگه دارید"), Toast.LENGTH_SHORT).show()
         }
         panicBtn.setOnLongClickListener { panic(); true }
         bar.addView(panicBtn)
-        bar.addView(Icons.button(this, "exit", Neo.BARTEXT) { SessionVault.lock(); finishAffinity() })
+        bar.addView(Icons.button(this, "exit", Neo.BARTEXT) { SessionVault.lockAll(); finishAffinity() })
         root.addView(bar)
 
         val holder = FrameLayout(this)
