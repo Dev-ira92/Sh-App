@@ -44,6 +44,13 @@ class ChatActivity : BaseActivity() {
         header = Neo.text(this, "", 15, Neo.BARTEXT)
         header.typeface = Neo.BOLD
         bar.addView(header, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        val simBtn = Neo.text(this, "SIM", 12, Neo.BARTEXT)
+        simBtn.background = Neo.box(this, 0, Neo.BARTEXT, 6)
+        simBtn.setPadding(Neo.dp(this, 8), Neo.dp(this, 4), Neo.dp(this, 8), Neo.dp(this, 4))
+        simBtn.setOnClickListener { chooseSim() }
+        bar.addView(simBtn)
+
         bar.addView(Icons.button(this, "key", Neo.BARTEXT) { unlock() })
         bar.addView(Icons.button(this, "download", Neo.BARTEXT) { importMenu() })
         bar.addView(Icons.button(this, "upload", Neo.BARTEXT) { exportMenu() })
@@ -122,6 +129,14 @@ class ChatActivity : BaseActivity() {
                        else "🟢 " + tr("plain text — NOT secret", "متن ساده — محرمانه نیست") + parts
     }
 
+    // ---------- SIM ----------
+    private fun chooseSim() {
+        val c = contact ?: return
+        Sims.choose(this, "sim_c${c.id}", true) {
+            toast(tr("SIM: ", "سیم‌کارت: ") + Sims.label(this, Sims.current(this, c.id)))
+        }
+    }
+
     // ---------- keys ----------
     private fun unlock() {
         val c = contact ?: return
@@ -147,7 +162,7 @@ class ChatActivity : BaseActivity() {
 
         val id = Messages.insert(this, Msg(0, c.id, text, true, System.currentTimeMillis(), true, false, 0, 0))
         try {
-            Sender.send(this, c.phone, payload, id)
+            SimSender.send(this, c.phone, payload, id, Sims.current(this, c.id))
         } catch (e: Exception) {
             Messages.setStatus(this, id, 2)
         }
