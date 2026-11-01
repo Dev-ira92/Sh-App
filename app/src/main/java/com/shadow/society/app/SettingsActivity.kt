@@ -5,26 +5,23 @@ import android.os.Bundle
 import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
-import android.widget.EditText
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.TextView
 import android.widget.Toast
-import java.io.File
 
 class SettingsActivity : BaseActivity() {
-    private val keyLengths = intArrayOf(10, 50, 100, 500, 1000)
     private val lockSecs = intArrayOf(0, 15, 30, 60, 300)
     private val sizes = intArrayOf(100, 120, 150, 180, 220)
 
-    private lateinit var keyView: TextView
-    private lateinit var qr: ImageView
+    private lateinit var lockTypeBtn: Button
+    private lateinit var keyClearBtn: Button
     private lateinit var pulseBtn: Button
     private lateinit var lockBtn: Button
     private lateinit var lockdownBtn: Button
-    private lateinit var appLockBtn: Button
-    private lateinit var duress: EditText
+    private lateinit var simBtn: Button
+    private lateinit var duressBtn: Button
+
+    private fun toast(s: String) { Toast.makeText(this, s, Toast.LENGTH_SHORT).show() }
 
     private fun lockLabel(s: Int): String =
         if (s == 0) tr("immediately", "فوراً") else if (s < 60) "$s s" else "${s / 60} min"
@@ -100,107 +97,65 @@ class SettingsActivity : BaseActivity() {
             applyAndRebuild()
         }
 
-        // ---- App lock ----
+        // ---- Lock ----
         col.addView(Neo.section(this, tr("APP LOCK", "قفل برنامه")))
-        col.addView(Neo.text(this, tr("Fingerprint, face, pattern, PIN or password of your phone, asked before the login screen. The login passphrase is still required.",
-            "اثر انگشت، چهره، الگو، پین یا رمز گوشی، پیش از صفحه‌ی ورود پرسیده می‌شود. رمز ورود برنامه هم همچنان لازم است."), 12, Neo.DIM))
-        appLockBtn = Neo.button(this, "")
-        Neo.add(col, appLockBtn, 8)
-        appLockBtn.setOnClickListener {
-            if (!AppLock.available(this)) {
-                Dialogs.info(this, tr("Not available", "در دسترس نیست"),
-                    tr("Set a screen lock (PIN, pattern, fingerprint or face) in your phone settings first.",
-                        "اول در تنظیمات گوشی، قفل صفحه (پین، الگو، اثر انگشت یا چهره) را فعال کنید."))
-            } else {
-                AppLock.prompt(this, {
-                    Prefs.putInt(this, "applock", if (AppLock.enabled(this)) 0 else 1)
-                    refresh()
-                }, { })
+        lockTypeBtn = Neo.button(this, "")
+        Neo.add(col, lockTypeBtn, 4)
+        lockTypeBtn.setOnClickListener { changeLock() }
+        lockBtn = Neo.button(this, "")
+        Neo.add(col, lockBtn, 8)
+        lockBtn.setOnClickListener {
+            val labels = Array(lockSecs.size) { lockLabel(lockSecs[it]) }
+            Dialogs.choose(this, tr("Lock the app after leaving it", "قفل برنامه پس از خروج"), labels, -1) { w ->
+                Prefs.putInt(this, "autolock", lockSecs[w])
+                refresh()
             }
         }
 
         // ---- My key ----
-        col.addView(Neo.section(this, tr("MY KEY (give it to your friend)", "کلید من (به دوستت بده)")))
-        keyView = Neo.text(this, "", 12, Neo.TEXT)
-        keyView.setTextIsSelectable(true)
-        col.addView(keyView)
-        qr = ImageView(this)
-        Neo.add(col, qr, 10)
+        col.addView(Neo.section(this, tr("MY KEY", "کلید من")))
+        val keyBtn = Neo.button(this, tr("Open my key page (copy / send / QR)", "صفحه‌ی کلید من (کپی / ارسال / QR)"))
+        Neo.add(col, keyBtn, 4)
+        keyBtn.setOnClickListener { startActivity(Intent(this, KeyActivity::class.java)) }
 
-        val shareBtn = Neo.button(this, tr("Send my key…", "ارسال کلید من…"))
-        Neo.add(col, shareBtn, 10)
-        shareBtn.setOnClickListener {
-            val labels = arrayOf(tr("QR image (PNG)", "تصویر QR (PNG)"), tr("JSON file", "فایل JSON"), tr("TXT file", "فایل TXT"))
-            Dialogs.choose(this, tr("Send my key as", "ارسال کلید به صورت"), labels, -1) { w ->
-                Dialogs.confirm(this, tr("This file contains your KEY. Send it only to the person you will talk with, then agree on the verbal code in person.",
-                    "این فایل «کلید من» را دارد. فقط به همان مخاطب بفرست و کد شفاهی را حضوری با او هماهنگ کن.")) {
-                    val k = Vault.myKey(this)
-                    val f: File? = when (w) {
-                        0 -> Files.exportKeyPng(this, k)
-                        1 -> Files.exportKeyJson(this, k)
-                        else -> Files.exportKeyTxt(this, k)
-                    }
-                    if (f == null) {
-                        Toast.makeText(this, tr("Could not create the file", "ساخت فایل ناموفق بود"), Toast.LENGTH_SHORT).show()
-                    } else {
-                        Files.share(this, f, if (w == 0) "image/png" else if (w == 1) "application/json" else "text/plain")
-                    }
-                }
+        // ---- Session keys ----
+        col.addView(Neo.section(this, tr("SESSION KEYS", "کلیدهای جلسه")))
+        col.addView(Neo.text(this, tr("Friend/session keys live only in memory. Choose when they are cleared after you leave the app.",
+            "کلیدهای مخاطب فقط در حافظه‌اند. انتخاب کن بعد از خروج از برنامه کی پاک شوند."), 12, Neo.DIM))
+        keyClearBtn = Neo.button(this, "")
+        Neo.add(col, keyClearBtn, 8)
+        keyClearBtn.setOnClickListener {
+            val labels = Array(KeyPolicy.OPTIONS.size) { KeyPolicy.label(KeyPolicy.OPTIONS[it]) }
+            Dialogs.choose(this, tr("Clear keys", "پاک شدن کلیدها"), labels, -1) { w ->
+                KeyPolicy.set(this, KeyPolicy.OPTIONS[w])
+                refresh()
             }
         }
-
-        val regen = Neo.button(this, tr("🎲 generate new key", "🎲 ساخت کلید جدید"))
-        Neo.add(col, regen, 8)
-        regen.setOnClickListener {
-            val labels = Array(keyLengths.size) {
-                keyLengths[it].toString() + " " + tr("characters", "کاراکتر") + (if (keyLengths[it] < 50) "  ⚠" else "")
-            }
-            Dialogs.choose(this, tr("Key length", "طول کلید"), labels, -1) { which ->
-                Dialogs.confirm(this, tr("Your friends must receive the new key again. Continue?",
-                    "دوستانت باید کلید جدید را دوباره بگیرند. ادامه؟")) {
-                    Vault.regenerate(this, keyLengths[which])
-                    SessionVault.wipeKeys()
-                    refresh()
-                }
-            }
-        }
-
-        // ---- Duress ----
-        col.addView(Neo.section(this, tr("DURESS CODE", "کد اضطراری")))
-        col.addView(Neo.text(this, tr("Typing this at login silently wipes everything and shows an empty, normal-looking app.",
-            "وارد کردن این رمز در صفحه ورود، بی‌صدا همه‌چیز را پاک می‌کند و یک برنامه‌ی خالی و عادی نشان می‌دهد."), 12, Neo.DIM))
-        duress = Neo.input(this,
-            if (Duress.isSet(this)) tr("(set) new duress code", "(تنظیم شده) رمز جدید") else tr("duress code", "رمز اضطراری"))
-        Neo.add(col, duress, 8)
-        val setDuress = Neo.button(this, tr("save duress code", "ذخیره رمز اضطراری"))
-        Neo.add(col, setDuress, 8)
-        setDuress.setOnClickListener { saveDuress() }
-
-        // ---- Dragon's pulse ----
-        col.addView(Neo.section(this, tr("DRAGON'S PULSE", "نبض اژدها")))
-        col.addView(Neo.text(this, tr("Session keys self-destruct after this time. Messages stay but become unreadable.",
-            "کلیدهای جلسه بعد از این مدت نابود می‌شوند. پیام‌ها می‌مانند اما خوانا نیستند."), 12, Neo.DIM))
         pulseBtn = Neo.button(this, "")
         Neo.add(col, pulseBtn, 8)
         pulseBtn.setOnClickListener {
             val labels = Array(Pulse.HOURS.size) { Pulse.label(Pulse.HOURS[it]) }
-            Dialogs.choose(this, tr("Dragon's Pulse", "نبض اژدها"), labels, -1) { w ->
+            Dialogs.choose(this, tr("Dragon's Pulse (maximum life of a key)", "نبض اژدها (حداکثر عمر کلید)"), labels, -1) { w ->
                 Pulse.set(this, Pulse.HOURS[w])
                 refresh()
             }
         }
 
-        // ---- Auto-lock ----
-        col.addView(Neo.section(this, tr("AUTO-LOCK", "قفل خودکار")))
-        lockBtn = Neo.button(this, "")
-        Neo.add(col, lockBtn, 4)
-        lockBtn.setOnClickListener {
-            val labels = Array(lockSecs.size) { lockLabel(lockSecs[it]) }
-            Dialogs.choose(this, tr("Lock after leaving the app", "قفل پس از خروج از برنامه"), labels, -1) { w ->
-                Prefs.putInt(this, "autolock", lockSecs[w])
-                refresh()
-            }
-        }
+        // ---- SIM ----
+        col.addView(Neo.section(this, tr("SIM CARD", "سیم‌کارت")))
+        col.addView(Neo.text(this, tr("Default SIM for sending. You can also pick a SIM inside each chat (SIM button).",
+            "سیم‌کارت پیش‌فرض برای ارسال. داخل هر چت هم با دکمه‌ی SIM می‌توانی انتخاب کنی."), 12, Neo.DIM))
+        simBtn = Neo.button(this, "")
+        Neo.add(col, simBtn, 8)
+        simBtn.setOnClickListener { Sims.choose(this, "sim", false) { refresh() } }
+
+        // ---- Duress ----
+        col.addView(Neo.section(this, tr("DURESS CODE", "کد اضطراری")))
+        col.addView(Neo.text(this, tr("Entering this at the lock screen silently wipes everything and shows an empty, normal-looking app. Works with password, PIN and pattern locks.",
+            "وارد کردن این کد در صفحه‌ی قفل، بی‌صدا همه‌چیز را پاک می‌کند و یک برنامه‌ی خالی و عادی نشان می‌دهد. برای قفل رمز، پین و الگو کار می‌کند."), 12, Neo.DIM))
+        duressBtn = Neo.button(this, "")
+        Neo.add(col, duressBtn, 8)
+        duressBtn.setOnClickListener { setDuress() }
 
         // ---- Lockdown ----
         col.addView(Neo.section(this, tr("LOCKDOWN", "حالت قفل‌شده")))
@@ -210,7 +165,7 @@ class SettingsActivity : BaseActivity() {
         Neo.add(col, lockdownBtn, 8)
         lockdownBtn.setOnClickListener {
             Lockdown.set(this, !Lockdown.isOn(this))
-            Toast.makeText(this, tr("Launcher icon will change in a few seconds", "آیکن چند ثانیه‌ی دیگر عوض می‌شود"), Toast.LENGTH_LONG).show()
+            toast(tr("Launcher icon will change in a few seconds", "آیکن چند ثانیه‌ی دیگر عوض می‌شود"))
             refresh()
         }
 
@@ -233,33 +188,57 @@ class SettingsActivity : BaseActivity() {
     override fun onReady() { refresh() }
 
     private fun refresh() {
-        val k = Vault.myKey(this)
-        keyView.text = k
-        qr.setImageBitmap(Qr.render(k, Neo.dp(this, 260)))
-        pulseBtn.text = tr("pulse: ", "نبض: ") + Pulse.label(Pulse.hours(this))
-        lockBtn.text = tr("lock: ", "قفل: ") + lockLabel(Prefs.int(this, "autolock", 60))
+        lockTypeBtn.text = tr("Lock type: ", "نوع قفل: ") + LockType.label(Vault.lockType(this)) + tr("  (change)", "  (تغییر)")
+        lockBtn.text = tr("Lock app after leaving: ", "قفل برنامه پس از خروج: ") + lockLabel(Prefs.int(this, "autolock", 60))
+        keyClearBtn.text = tr("Clear keys: ", "پاک شدن کلیدها: ") + KeyPolicy.label(KeyPolicy.minutes(this))
+        pulseBtn.text = tr("Max key life: ", "حداکثر عمر کلید: ") + Pulse.label(Pulse.hours(this))
+        simBtn.text = tr("Default SIM: ", "سیم‌کارت پیش‌فرض: ") + Sims.label(this, Prefs.int(this, "sim", -1))
+        duressBtn.text = if (Duress.isSet(this)) tr("Duress code: set (tap to change)", "کد اضطراری: تنظیم شده (تغییر)")
+                         else tr("Duress code: not set (tap to set)", "کد اضطراری: تنظیم نشده (تنظیم)")
         lockdownBtn.text = if (Lockdown.isOn(this)) tr("lockdown: ON — tap to disable", "حالت قفل: روشن")
                            else tr("lockdown: OFF — tap to enable", "حالت قفل: خاموش")
-        val state = if (!AppLock.available(this)) tr("not set up on phone", "روی گوشی فعال نیست")
-                    else if (AppLock.enabled(this)) tr("ON", "روشن") else tr("OFF", "خاموش")
-        appLockBtn.text = tr("App lock: ", "قفل برنامه: ") + state
     }
 
-    private fun saveDuress() {
-        val code = duress.text.toString()
-        if (code.length < 8) {
-            Toast.makeText(this, tr("min 8 characters", "حداقل ۸ کاراکتر"), Toast.LENGTH_SHORT).show()
-            return
+    private fun changeLock() {
+        val types = arrayListOf(LockType.PASS, LockType.PIN, LockType.PATTERN)
+        if (AppLock.available(this)) types.add(LockType.BIO)
+        val labels = Array(types.size) { LockType.label(types[it]) }
+        Dialogs.choose(this, tr("New lock type", "نوع قفل جدید"), labels, types.indexOf(Vault.lockType(this))) { w ->
+            val t = types[w]
+            if (t == LockType.BIO) {
+                AppLock.prompt(this, { applyLock(t, "") }, { m -> toast(m) })
+            } else {
+                askSecret(this, t, tr("New lock", "قفل جدید"), true) { s -> applyLock(t, s) }
+            }
         }
+    }
+
+    private fun applyLock(t: String, secret: String) {
         Thread {
-            val same = Vault.deriveDbKey(this, code) == SessionVault.dbKey()
-            if (!same) Duress.set(this, code)
+            val ok = Vault.changeLock(this, t, secret)
+            if (ok) Duress.clear(this)
             runOnUiThread {
-                Toast.makeText(this,
-                    if (same) tr("must differ from your passphrase", "باید با رمز ورود فرق داشته باشد") else tr("saved", "ذخیره شد"),
-                    Toast.LENGTH_SHORT).show()
-                if (!same) duress.setText("")
+                toast(if (ok) tr("Lock changed (duress code reset)", "قفل تغییر کرد (کد اضطراری پاک شد)") else tr("Failed", "ناموفق"))
+                refresh()
             }
         }.start()
+    }
+
+    private fun setDuress() {
+        val t = Vault.lockType(this)
+        if (t == LockType.BIO) {
+            toast(tr("Needs a password, PIN or pattern lock", "نیاز به قفل رمز، پین یا الگو دارد"))
+            return
+        }
+        askSecret(this, t, tr("Duress code", "کد اضطراری"), true) { s ->
+            Thread {
+                val same = Vault.deriveDbKey(this, s) == SessionVault.dbKey()
+                if (!same) Duress.set(this, s)
+                runOnUiThread {
+                    toast(if (same) tr("Must differ from your lock", "باید با قفل اصلی فرق داشته باشد") else tr("Saved", "ذخیره شد"))
+                    refresh()
+                }
+            }.start()
+        }
     }
 }
