@@ -7,12 +7,15 @@ import net.sqlcipher.database.SQLiteOpenHelper
 
 class Contact(var id: Long, var name: String, var phone: String, var level: Int, var createdAt: Long)
 
-/** body = plain text, or Base64(IV+ciphertext) when cipher = true */
-class Msg(var id: Long, var contactId: Long, var body: String, var sent: Boolean,
-          var ts: Long, var read: Boolean, var cipher: Boolean)
+/**
+ * body = plain text, or Base64(IV+ciphertext) when cipher = true.
+ * status: 0 pending, 1 sent, 2 failed, 3 delivered.   tag bits: 1 imported, 2 exported.
+ */
+class Msg(var id: Long, var contactId: Long, var body: String, var sent: Boolean, var ts: Long,
+          var read: Boolean, var cipher: Boolean, var status: Int = 1, var tag: Int = 0)
 
 /** SQLCipher database (whole file AES-256). Key lives in RAM only (SessionVault). */
-class Db private constructor(c: Context) : SQLiteOpenHelper(c, NAME, null, 1) {
+class Db private constructor(c: Context) : SQLiteOpenHelper(c, NAME, null, 2) {
 
     companion object {
         const val NAME = "shso.db"
@@ -45,7 +48,8 @@ class Db private constructor(c: Context) : SQLiteOpenHelper(c, NAME, null, 1) {
                 "phone TEXT NOT NULL UNIQUE, trust_level INTEGER NOT NULL DEFAULT 0, created_at INTEGER)")
         db.execSQL("CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, contact_id INTEGER NOT NULL, " +
                 "body TEXT NOT NULL, is_sent INTEGER NOT NULL, timestamp INTEGER NOT NULL, " +
-                "is_read INTEGER NOT NULL DEFAULT 0, is_cipher INTEGER NOT NULL DEFAULT 0)")
+                "is_read INTEGER NOT NULL DEFAULT 0, is_cipher INTEGER NOT NULL DEFAULT 0, " +
+                "status INTEGER NOT NULL DEFAULT 1, tag INTEGER NOT NULL DEFAULT 0)")
         db.execSQL("CREATE INDEX idx_msg_contact ON messages(contact_id, timestamp)")
         db.execSQL("CREATE TABLE meta(k TEXT PRIMARY KEY, v TEXT)")
     }
@@ -54,7 +58,12 @@ class Db private constructor(c: Context) : SQLiteOpenHelper(c, NAME, null, 1) {
         try { db.rawQuery("PRAGMA secure_delete=ON", null).close() } catch (e: Exception) { }
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, o: Int, n: Int) { }
+    override fun onUpgrade(db: SQLiteDatabase, o: Int, n: Int) {
+        if (o < 2) {
+            db.execSQL("ALTER TABLE messages ADD COLUMN status INTEGER NOT NULL DEFAULT 1")
+            db.execSQL("ALTER TABLE messages ADD COLUMN tag INTEGER NOT NULL DEFAULT 0")
+        }
+    }
 
     fun getMeta(k: String): String? =
         db().rawQuery("SELECT v FROM meta WHERE k=?", arrayOf(k)).use { cur ->
@@ -123,17 +132,18 @@ object Contacts {
 object Messages {
     fun list(c: Context, cid: Long): List<Msg> =
         Db.get(c).db().rawQuery(
-            "SELECT id,contact_id,body,is_sent,timestamp,is_read,is_cipher FROM messages " +
+            "SELECT id,contact_id,body,is_sent,timestamp,is_read,is_cipher,status,tag FROM messages " +
                     "WHERE contact_id=? ORDER BY timestamp, id", arrayOf(cid.toString())).use { cur ->
             val l = ArrayList<Msg>()
             while (cur.moveToNext()) {
                 l.add(Msg(cur.getLong(0), cur.getLong(1), cur.getString(2), cur.getInt(3) == 1,
-                    cur.getLong(4), cur.getInt(5) == 1, cur.getInt(6) == 1))
+                    cur.getLong(4), cur.getInt(5) == 1, cur.getInt(6) == 1, cur.getInt(7), cur.getInt(8)))
             }
             l
         }
 
-    fun insert(c: Context, m: Msg) {
+    /** Returns the new row id. */
+    fun insert(c: Context, m: Msg): Long {
         val cv = ContentValues()
         cv.put("contact_id", m.contactId)
         cv.put("body", m.body)
@@ -141,7 +151,9 @@ object Messages {
         cv.put("timestamp", m.ts)
         cv.put("is_read", if (m.read) 1 else 0)
         cv.put("is_cipher", if (m.cipher) 1 else 0)
-        Db.get(c).db().insert("messages", null, cv)
+        cv.put("status", m.status)
+        cv.put("tag", m.tag)
+        return Db.get(c).db().insert("messages", null, cv)
     }
 
     fun unread(c: Context, cid: Long): Int =
@@ -151,4 +163,18 @@ object Messages {
     fun markRead(c: Context, cid: Long) {
         Db.get(c).db().execSQL("UPDATE messages SET is_read=1 WHERE contact_id=? AND is_read=0", arrayOf<Any?>(cid))
     }
+
+    fun setStatus(c: Context, id: Long, st: Int) {
+        Db.get(c).db().execSQL("UPDATE messages SET status=? WHERE id=? AND status<>3", arrayOf<Any?>(st, id))
+    }
+
+    fun tagAll(c: Context, cid: Long, bit: Int) {
+        Db.get(c).db().execSQL("UPDATE messages SET tag=(tag | ?) WHERE contact_id=?", arrayOf<Any?>(bit, cid))
+    }
+
+    fun exists(c: Context, m: Msg): Boolean =
+        Db.get(c).db().rawQuery(
+            "SELECT COUNT(*) FROM messages WHERE contact_id=? AND timestamp=? AND body=? AND is_sent=?",
+            arrayOf(m.contactId.toString(), m.ts.toString(), m.body, if (m.sent) "1" else "0")
+        ).use { cur -> cur.moveToFirst() && cur.getInt(0) > 0 }
 }
