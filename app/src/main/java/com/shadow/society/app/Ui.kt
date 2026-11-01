@@ -7,7 +7,6 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.text.InputType
 import android.text.format.DateFormat
 import android.util.Base64
@@ -16,10 +15,12 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.AbsListView
 import android.widget.BaseAdapter
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Toast
 import java.util.Random
+import java.util.TimeZone
 
 object Dialogs {
     fun choose(c: Context, title: String, labels: Array<String>, sel: Int, cb: (Int) -> Unit) {
@@ -107,17 +108,9 @@ class ContactAdapter(private val ctx: Context) : BaseAdapter() {
             setPadding(p, p, p, p)
             layoutParams = AbsListView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
-        val oval = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(Neo.ACCENT)
-        }
-        val avatar = Neo.text(ctx, c.name.take(1).uppercase(), 20, Neo.P.onAccent).apply {
-            gravity = Gravity.CENTER
-            background = oval
-            typeface = Neo.BOLD
-        }
-        val s = Neo.dp(ctx, 50)
-        row.addView(avatar, LinearLayout.LayoutParams(s, s))
+        val s = Neo.dp(ctx, 52)
+        row.addView(Neo.avatar(ctx, c.name), LinearLayout.LayoutParams(s, s))
+
         val col = Neo.vertical(ctx).apply { setPadding(Neo.dp(ctx, 14), 0, Neo.dp(ctx, 8), 0) }
         col.addView(Neo.text(ctx, c.name, 17, Neo.TEXT).apply { typeface = Neo.BOLD })
         col.addView(Neo.text(ctx, c.phone, 12, Neo.DIM))
@@ -131,17 +124,33 @@ class ContactAdapter(private val ctx: Context) : BaseAdapter() {
             }
             row.addView(pill)
         }
-        val lvl = if (c.level == 1) (if (SessionVault.key(c.id) != null) "🔓" else "🔒") + "🔴" else "🟢"
-        row.addView(Neo.text(ctx, "  $lvl", 14, Neo.TEXT))
+        val unlocked = c.level == 1 && SessionVault.key(c.id) != null
+        val name = if (c.level == 1) (if (unlocked) "unlock" else "lock") else "eye"
+        val tint = if (c.level == 1) (if (unlocked) Neo.ACCENT else Neo.RED) else Neo.DIM
+        val iv = Icons.view(ctx, name, tint, 22, Neo.fs)
+        iv.setPadding(Neo.dp(ctx, 10), 0, 0, 0)
+        row.addView(iv)
         return row
     }
 }
 
+private fun dayKey(ts: Long): Long = (ts + TimeZone.getDefault().getOffset(ts)) / 86400000L
+
+private fun dayLabel(ts: Long): String {
+    val today = dayKey(System.currentTimeMillis())
+    val k = dayKey(ts)
+    return when (k) {
+        today -> tr("Today", "امروز")
+        today - 1 -> tr("Yesterday", "دیروز")
+        else -> DateFormat.format("dd MMM yyyy", ts).toString()
+    }
+}
+
 /**
- * Telegram-style bubbles. Mine: right side, theme color. Friend: left side.
- * Fire messages are stored as ciphertext: if the session key in RAM matches (same keys, verbal code,
- * method and formula on both sides) the text is decrypted; otherwise ONLY the raw text is shown.
- * Long-press a bubble to copy its text.
+ * Bubbles: mine on the right, friend's on the left, each with a tail. Footer shows time, import/export
+ * marks and SMS status icons. Fire messages are stored as ciphertext: if the session key in RAM matches
+ * (same keys, verbal code, method and formula on both sides) the text is decrypted; otherwise ONLY the
+ * raw text is shown. Long-press a bubble to copy its text.
  */
 class MessageAdapter(private val ctx: Context) : BaseAdapter() {
     private var items: List<Msg> = emptyList()
@@ -151,14 +160,31 @@ class MessageAdapter(private val ctx: Context) : BaseAdapter() {
     override fun getItem(i: Int): Msg = items[i]
     override fun getItemId(i: Int): Long = items[i].id
 
+    private fun icon(name: String, tint: Int): ImageView {
+        val iv = Icons.view(ctx, name, tint, 12, Neo.fs)
+        iv.setPadding(Neo.dp(ctx, 2), 0, Neo.dp(ctx, 2), 0)
+        return iv
+    }
+
     override fun getView(pos: Int, v: View?, parent: ViewGroup?): View {
         val m = items[pos]
         val pal = Neo.P
-        val row = LinearLayout(ctx).apply {
+        val col = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = if (m.sent) Gravity.RIGHT else Gravity.LEFT
-            setPadding(Neo.dp(ctx, 10), Neo.dp(ctx, 3), Neo.dp(ctx, 10), Neo.dp(ctx, 3))
+            setPadding(Neo.dp(ctx, 10), Neo.dp(ctx, 2), Neo.dp(ctx, 10), Neo.dp(ctx, 2))
             layoutParams = AbsListView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+
+        if (pos == 0 || dayKey(items[pos - 1].ts) != dayKey(m.ts)) {
+            val sep = Neo.text(ctx, dayLabel(m.ts), 11, pal.recvText).apply {
+                background = Neo.box(ctx, Neo.withAlpha(pal.recv, 235), Neo.withAlpha(Neo.DIM, 90), 12)
+                setPadding(Neo.dp(ctx, 12), Neo.dp(ctx, 3), Neo.dp(ctx, 12), Neo.dp(ctx, 3))
+            }
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            lp.gravity = Gravity.CENTER_HORIZONTAL
+            lp.topMargin = Neo.dp(ctx, 8)
+            lp.bottomMargin = Neo.dp(ctx, 6)
+            col.addView(sep, lp)
         }
 
         var text = m.body
@@ -176,11 +202,13 @@ class MessageAdapter(private val ctx: Context) : BaseAdapter() {
         val shown = text
         val fg = if (m.sent) pal.sentText else pal.recvText
         val soft = Neo.withAlpha(fg, 170)
+        val tail = Neo.dp(ctx, 7)
 
         val box = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            background = Neo.bubble(ctx, if (m.sent) pal.sent else pal.recv, m.sent)
-            setPadding(Neo.dp(ctx, 12), Neo.dp(ctx, 7), Neo.dp(ctx, 12), Neo.dp(ctx, 5))
+            background = Neo.bubble(ctx, m.sent)
+            val hp = Neo.dp(ctx, 12)
+            setPadding(hp + (if (m.sent) 0 else tail), Neo.dp(ctx, 8), hp + (if (m.sent) tail else 0), Neo.dp(ctx, 6))
         }
         val tv = Neo.text(ctx, shown, 15, if (ok) fg else Neo.withAlpha(fg, 150)).apply {
             maxWidth = (ctx.resources.displayMetrics.widthPixels * 0.72f).toInt()
@@ -191,32 +219,41 @@ class MessageAdapter(private val ctx: Context) : BaseAdapter() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.RIGHT or Gravity.CENTER_VERTICAL
         }
-        val tags = StringBuilder()
-        if (!ok) tags.append("🔒 ")
-        if ((m.tag and 1) != 0) tags.append("⬇ " + tr("imported", "وارد شده") + "  ")
-        if ((m.tag and 2) != 0) tags.append("⬆ " + tr("exported", "خروجی") + "  ")
-        if (tags.isNotEmpty()) foot.addView(Neo.text(ctx, tags.toString(), 10, soft))
+        if (!ok) foot.addView(icon("lock", soft))
+        if ((m.tag and 1) != 0) {
+            foot.addView(icon("download", soft))
+            foot.addView(Neo.text(ctx, tr("imported", "وارد شده") + "  ", 10, soft))
+        }
+        if ((m.tag and 2) != 0) {
+            foot.addView(icon("upload", soft))
+            foot.addView(Neo.text(ctx, tr("exported", "خروجی") + "  ", 10, soft))
+        }
         foot.addView(Neo.text(ctx, DateFormat.format("HH:mm", m.ts).toString(), 10, soft))
         if (m.sent) {
-            val st: Pair<String, Int> = when (m.status) {
-                0 -> Pair("  …", soft)
-                2 -> Pair("  ✗ " + tr("failed", "ناموفق"), pal.red)
-                3 -> Pair("  ✓✓", fg)
-                else -> Pair("  ✓", soft)
+            when (m.status) {
+                0 -> foot.addView(icon("clock", soft))
+                2 -> {
+                    foot.addView(icon("cross", pal.red))
+                    foot.addView(Neo.text(ctx, tr("failed", "ناموفق"), 10, pal.red))
+                }
+                3 -> foot.addView(icon("check2", fg))
+                else -> foot.addView(icon("check", soft))
             }
-            foot.addView(Neo.text(ctx, st.first, 11, st.second))
         }
         box.addView(foot)
 
         val copy = View.OnLongClickListener { Neo.copy(ctx, shown); true }
         box.setOnLongClickListener(copy)
         tv.setOnLongClickListener(copy)
-        row.addView(box)
-        return row
+
+        val lpB = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        lpB.gravity = if (m.sent) Gravity.RIGHT else Gravity.LEFT
+        col.addView(box, lpB)
+        return col
     }
 }
 
-/** Build the session key: My Key (automatic) + Friend Key (type or scan QR) + Verbal code + chosen method. */
+/** Build the session key: My Key (automatic) + Friend Key (type, scan QR or import a file) + Verbal code + method. */
 fun showUnlock(a: Activity, c: Contact, scan: ((String) -> Unit) -> Unit, done: () -> Unit) {
     val sv = ScrollView(a)
     val col = Neo.vertical(a)
@@ -232,6 +269,7 @@ fun showUnlock(a: Activity, c: Contact, scan: ((String) -> Unit) -> Unit, done: 
     }
     frow.addView(friend, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
     frow.addView(Icons.button(a, "scan", Neo.ACCENT) { scan { friend.setText(it) } })
+    frow.addView(Icons.button(a, "file", Neo.ACCENT) { (a as? BaseActivity)?.pickKeyFile { friend.setText(it) } })
 
     val verbal = Neo.input(a, tr("verbal code (2-3 words)", "کد شفاهی (۲-۳ کلمه)"))
     val formula = Neo.input(a, tr("mixer formula", "فرمول اختلاط")).apply { setText(KeyMixer.DEFAULT_FORMULA) }
@@ -259,7 +297,7 @@ fun showUnlock(a: Activity, c: Contact, scan: ((String) -> Unit) -> Unit, done: 
     sv.addView(col)
 
     val d = Neo.dialog(a)
-        .setTitle("🔑 " + c.name)
+        .setTitle(c.name)
         .setView(sv)
         .setPositiveButton(tr("Derive", "ساخت کلید"), null)
         .setNegativeButton(tr("Cancel", "انصراف"), null)
