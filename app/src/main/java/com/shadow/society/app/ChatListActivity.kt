@@ -1,12 +1,11 @@
 package com.shadow.society.app
 
 import android.content.Intent
-import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.Gravity
 import android.view.ViewGroup
-import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ListView
@@ -20,32 +19,32 @@ class ChatListActivity : BaseActivity() {
         if (isFinishing) return
 
         val root = Neo.vertical(this)
-        root.setBackgroundColor(Neo.BG)
         val p = Neo.dp(this, 12)
-        val one = Neo.dp(this, 1)
 
         val bar = LinearLayout(this)
         bar.orientation = LinearLayout.HORIZONTAL
         bar.gravity = Gravity.CENTER_VERTICAL
         bar.setBackgroundColor(Neo.PANEL)
-        bar.setPadding(p, p / 2, p / 2, p / 2)
-        val title = Neo.text(this, "Sh-So _", 22, Neo.GREEN)
-        title.typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+        bar.setPadding(p, p / 3, p / 2, p / 3)
+        val title = Neo.text(this, "Sh-So", 22, Neo.BARTEXT)
+        title.typeface = Neo.BOLD
         bar.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        bar.addView(Neo.iconButton(this, "⚙") { startActivity(Intent(this, SettingsActivity::class.java)) })
-        val panicBtn = Neo.iconButton(this, "☠") {
+        bar.addView(Icons.button(this, "tune", Neo.BARTEXT) { startActivity(Intent(this, SettingsActivity::class.java)) })
+        val panicBtn = Icons.button(this, "alert", Neo.BARTEXT) {
             Toast.makeText(this, tr("hold to destroy everything", "برای نابودی همه‌چیز نگه دارید"), Toast.LENGTH_SHORT).show()
         }
         panicBtn.setOnLongClickListener { panic(); true }
         bar.addView(panicBtn)
-        bar.addView(Neo.iconButton(this, "🚪") { SessionVault.lock(); finishAffinity() })
+        bar.addView(Icons.button(this, "exit", Neo.BARTEXT) { SessionVault.lock(); finishAffinity() })
         root.addView(bar)
 
         val holder = FrameLayout(this)
         val lv = ListView(this)
-        lv.divider = ColorDrawable(Neo.DARK)
-        lv.dividerHeight = one
-        lv.selector = ColorDrawable(0x2200FF41)
+        lv.setBackgroundColor(0)
+        lv.cacheColorHint = 0
+        lv.divider = ColorDrawable(Neo.withAlpha(Neo.DIM, 60))
+        lv.dividerHeight = Neo.dp(this, 1)
+        lv.selector = ColorDrawable(Neo.withAlpha(Neo.ACCENT, 40))
         adapter = ContactAdapter(this)
         lv.adapter = adapter
         val empty = Neo.text(this, tr("> no contacts yet_", "> هنوز مخاطبی نیست_"), 14, Neo.DIM)
@@ -53,14 +52,21 @@ class ChatListActivity : BaseActivity() {
         holder.addView(lv)
         holder.addView(empty, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         lv.emptyView = empty
-        root.addView(holder, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
-        val add: Button = Neo.button(this, tr("[ + new contact ]", "[ + مخاطب جدید ]"))
-        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        lp.setMargins(p, p / 2, p, p)
-        root.addView(add, lp)
-        add.setOnClickListener { showAddContact(this, null) { reload() } }
-        setContentView(root)
+        val fab = Icons.button(this, "add", Neo.P.onAccent) { showAddContact(this, null) { reload() } }
+        val oval = GradientDrawable()
+        oval.shape = GradientDrawable.OVAL
+        oval.setColor(Neo.ACCENT)
+        fab.background = oval
+        val q = Neo.dp(this, 16)
+        fab.setPadding(q, q, q, q)
+        val flp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.BOTTOM or Gravity.RIGHT)
+        flp.setMargins(0, 0, Neo.dp(this, 18), Neo.dp(this, 18))
+        holder.addView(fab, flp)
+
+        root.addView(holder, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        setContentView(Neo.backdrop(this, root))
 
         lv.setOnItemClickListener { _, _, pos, _ ->
             startActivity(Intent(this, ChatActivity::class.java).putExtra("id", adapter.getItem(pos).id))
@@ -101,7 +107,7 @@ class ChatListActivity : BaseActivity() {
         adapter.set(l, l.associate { it.id to Messages.unread(this, it.id) })
     }
 
-    /** Long-press ☠ : keys, database, spool, settings — gone. */
+    /** Long-press the alert icon: keys, database, spool, settings — gone. */
     private fun panic() {
         Duress.wipeAll(this)
         startActivity(Intent(this, MainActivity::class.java)
