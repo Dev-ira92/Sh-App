@@ -16,12 +16,25 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Restore signing key
+        id: ks
+        uses: actions/cache@v4
+        with:
+          path: shso.keystore
+          key: shso-keystore-v1
+
+      - name: Create signing key (first time only)
+        if: steps.ks.outputs.cache-hit != 'true'
+        run: >
+          keytool -genkeypair -keystore shso.keystore -storepass shso123456 -keypass shso123456
+          -alias shso -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Sh-So, O=Sh-So, C=IR"
+
       - uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.4'
 
       - name: Build debug APK
-        run: gradle assembleDebug --no-daemon
+        run: gradle assembleDebug --no-daemon -PshsoKeystore=${{ github.workspace }}/shso.keystore
 
       - uses: actions/upload-artifact@v4
         with:
