@@ -239,6 +239,7 @@ object Duress {
         SessionVault.lock()
         c.deleteDatabase(Db.NAME)
         Spool.clear(c)
+        Files.clear(c)
         Prefs.clear(c)
         try { NotificationManagerCompat.from(c).cancelAll() } catch (e: Exception) { }
     }
