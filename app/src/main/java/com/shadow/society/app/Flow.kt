@@ -1,7 +1,9 @@
 package com.shadow.society.app
 
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.SystemClock
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
@@ -10,19 +12,82 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricManager.Authenticators
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 
-/** Every screen after login extends this: locked vault => login; theme change => rebuild; QR scan helper. */
+/**
+ * App lock: fingerprint / face / pattern / PIN / password of the PHONE, asked before the login screen.
+ * It is only a first door. The vault passphrase is still required (it derives the database key).
+ */
+object AppLock {
+    private fun pick(c: Context): Int? {
+        val bm = BiometricManager.from(c)
+        val opts = intArrayOf(
+            Authenticators.BIOMETRIC_STRONG or Authenticators.DEVICE_CREDENTIAL,
+            Authenticators.BIOMETRIC_WEAK or Authenticators.DEVICE_CREDENTIAL,
+            Authenticators.BIOMETRIC_WEAK,
+            Authenticators.DEVICE_CREDENTIAL)
+        for (a in opts) {
+            if (bm.canAuthenticate(a) == BiometricManager.BIOMETRIC_SUCCESS) return a
+        }
+        return null
+    }
+
+    fun available(c: Context): Boolean = pick(c) != null
+    fun enabled(c: Context): Boolean = Prefs.int(c, "applock", 1) == 1
+
+    @Volatile private var lastOk = 0L
+    fun recentlyOk(): Boolean = lastOk != 0L && SystemClock.elapsedRealtime() - lastOk < 20000L
+
+    fun prompt(a: FragmentActivity, onOk: () -> Unit, onFail: (String) -> Unit) {
+        val auth = pick(a)
+        if (auth == null) { onOk(); return }
+        val cb = object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                lastOk = SystemClock.elapsedRealtime()
+                onOk()
+            }
+            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                onFail(errString.toString())
+            }
+        }
+        val b = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Sh-So")
+            .setSubtitle(tr("Verify it's you", "هویت خود را تأیید کنید"))
+            .setAllowedAuthenticators(auth)
+        if ((auth and Authenticators.DEVICE_CREDENTIAL) == 0) b.setNegativeButtonText(tr("Cancel", "انصراف"))
+        BiometricPrompt(a, ContextCompat.getMainExecutor(a), cb).authenticate(b.build())
+    }
+}
+
+/** Every screen after login extends this: locked vault => login; theme change => rebuild; QR / file key helpers. */
 abstract class BaseActivity : AppCompatActivity() {
     private var built = -1
     private var scanCb: ((String) -> Unit)? = null
+    private var keyCb: ((String) -> Unit)? = null
 
     private val scanLauncher = registerForActivityResult(ScanContract()) { r ->
         val s = r.contents
         if (s != null) scanCb?.invoke(s)
+    }
+
+    private val keyFileLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val k = Files.readKey(this, uri)
+            if (k == null) {
+                Toast.makeText(this, tr("No key found in this file", "کلیدی در این فایل پیدا نشد"), Toast.LENGTH_LONG).show()
+            } else {
+                keyCb?.invoke(k)
+            }
+        }
     }
 
     fun scanKey(cb: (String) -> Unit) {
@@ -33,6 +98,12 @@ abstract class BaseActivity : AppCompatActivity() {
         o.setBeepEnabled(false)
         o.setOrientationLocked(false)
         scanLauncher.launch(o)
+    }
+
+    /** Pick a key file: JSON, TXT or a picture of the QR code. */
+    fun pickKeyFile(cb: (String) -> Unit) {
+        keyCb = cb
+        keyFileLauncher.launch(arrayOf("text/*", "application/json", "image/*"))
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -106,6 +177,7 @@ fun showAddContact(a: BaseActivity, ex: Contact?, done: () -> Unit) {
     }
     frow.addView(friend, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
     frow.addView(Icons.button(a, "scan", Neo.ACCENT) { a.scanKey { friend.setText(it) } })
+    frow.addView(Icons.button(a, "file", Neo.ACCENT) { a.pickKeyFile { friend.setText(it) } })
     val verbal = Neo.input(a, tr("verbal code (2-3 words)", "کد شفاهی (۲-۳ کلمه)"))
     val formula = Neo.input(a, tr("mixer formula", "فرمول اختلاط")).apply { setText(KeyMixer.DEFAULT_FORMULA) }
     val descView = Neo.text(a, "", 11, Neo.DIM)
