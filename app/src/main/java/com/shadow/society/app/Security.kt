@@ -2,15 +2,20 @@ package com.shadow.society.app
 
 import android.content.Context
 import android.os.SystemClock
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
 import android.util.Base64
 import androidx.core.app.NotificationManagerCompat
 import org.bouncycastle.crypto.generators.SCrypt
 import java.security.GeneralSecurityException
+import java.security.KeyStore
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Locale
 import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
 import javax.crypto.Mac
+import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
@@ -84,7 +89,8 @@ object KeyMixer {
     /** K1/K2 are the two long keys in sorted order, so both phones compute the same thing. */
     fun mix(method: MixMethod, myKey: String, friendKey: String, verbal: String, formula: String): String {
         val a = myKey.trim()
-        val b = friendKey.trim()
+        val raw = friendKey.trim()
+        val b = Files.parseKey(raw) ?: raw          // accepts a pasted key, JSON or "SHSOKEY1|..." line
         val v = normalizeVerbal(verbal)
         require(b.isNotEmpty() && v.isNotEmpty()) { "empty" }
         val k1 = if (a <= b) a else b
@@ -184,7 +190,11 @@ object SessionVault {
 
     @Synchronized fun wipeKeys() { keys.values.forEach { it.key.fill(0) }; keys.clear() }
 
-    @Synchronized fun lock() { wipeKeys(); k = null; Db.close() }
+    /** Locks the database only. Session keys stay in RAM (see KeyPolicy). */
+    @Synchronized fun lock() { k = null; Db.close() }
+
+    /** Locks the database AND destroys every session key. */
+    @Synchronized fun lockAll() { wipeKeys(); lock() }
 }
 
 /** Dragon's Pulse: session keys self-destruct after N hours. */
@@ -195,13 +205,94 @@ object Pulse {
     fun label(h: Int): String = if (h == 0) tr("Off", "خاموش") else "$h h"
 }
 
-/** Vault passphrase + My Key (stored inside the encrypted database). */
+/** When are session keys cleared after you leave the app? 0 = at once, 10 / 30 minutes, -1 = never. */
+object KeyPolicy {
+    val OPTIONS = intArrayOf(0, 10, 30, -1)
+    fun minutes(c: Context): Int = Prefs.int(c, "key_clear", 10)
+    fun set(c: Context, m: Int) { Prefs.putInt(c, "key_clear", m) }
+    fun label(m: Int): String = when (m) {
+        0 -> tr("when I leave the app", "هنگام خروج از برنامه")
+        -1 -> tr("never (until the app is closed)", "هرگز پاک نشود")
+        else -> "$m " + tr("minutes", "دقیقه")
+    }
+}
+
+/** A random 256-bit secret locked inside the phone's Android Keystore. It never leaves the device. */
+object DevKey {
+    private const val ALIAS = "shso_master_v1"
+
+    private fun key(): SecretKey {
+        val ks = KeyStore.getInstance("AndroidKeyStore")
+        ks.load(null)
+        val ex = ks.getKey(ALIAS, null)
+        if (ex is SecretKey) return ex
+        val kg = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+        kg.init(KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setKeySize(256)
+            .build())
+        return kg.generateKey()
+    }
+
+    @Synchronized fun get(c: Context): ByteArray {
+        val blob = Prefs.str(c, "dev_blob")
+        if (blob != null) {
+            val b = Base64.decode(blob, Base64.NO_WRAP)
+            val ci = Cipher.getInstance("AES/GCM/NoPadding")
+            ci.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, b.copyOfRange(0, 12)))
+            return ci.doFinal(b, 12, b.size - 12)
+        }
+        val raw = Crypto.random(32)
+        val ci = Cipher.getInstance("AES/GCM/NoPadding")
+        ci.init(Cipher.ENCRYPT_MODE, key())
+        val ct = ci.doFinal(raw)
+        Prefs.putStr(c, "dev_blob", Base64.encodeToString(ci.iv + ct, Base64.NO_WRAP))
+        return raw
+    }
+
+    fun destroy() {
+        try {
+            val ks = KeyStore.getInstance("AndroidKeyStore")
+            ks.load(null)
+            ks.deleteEntry(ALIAS)
+        } catch (e: Exception) { }
+    }
+}
+
+/**
+ * Vault = the encrypted database.
+ *   database key = SHA-256( scrypt(your secret) + device key )
+ * The secret is the password / PIN / pattern. For "phone lock" type the secret is empty.
+ * My Key lives inside the encrypted database.
+ */
 object Vault {
     const val LOGN = 14
+
     fun exists(c: Context): Boolean = Prefs.str(c, "vault_salt") != null
-    fun createSalt(c: Context) { Prefs.putStr(c, "vault_salt", Base64.encodeToString(Crypto.random(16), Base64.NO_WRAP)) }
-    fun deriveDbKey(c: Context, pass: String): String =
-        Crypto.hex(Crypto.kdf(pass, Base64.decode(Prefs.str(c, "vault_salt"), Base64.NO_WRAP), LOGN))
+    fun lockType(c: Context): String = Prefs.str(c, "lock_type") ?: LockType.PASS
+
+    fun newSalt(): ByteArray = Crypto.random(16)
+    fun storeSalt(c: Context, salt: ByteArray) { Prefs.putStr(c, "vault_salt", Base64.encodeToString(salt, Base64.NO_WRAP)) }
+    private fun saltOf(c: Context): ByteArray = Base64.decode(Prefs.str(c, "vault_salt"), Base64.NO_WRAP)
+
+    private fun keyFor(c: Context, secret: String, salt: ByteArray): String {
+        val ku = if (secret.isEmpty()) ByteArray(32) else Crypto.kdf(secret, salt, LOGN)
+        return Crypto.hex(Crypto.sha256(ku + DevKey.get(c)))
+    }
+
+    fun deriveDbKey(c: Context, secret: String): String = keyFor(c, secret, saltOf(c))
+
+    /** Re-encrypts the database under a new lock (type + secret). */
+    fun changeLock(c: Context, type: String, secret: String): Boolean = try {
+        val salt = newSalt()
+        val nk = keyFor(c, secret, salt)
+        Db.get(c).db().changePassword(nk)
+        storeSalt(c, salt)
+        Prefs.putStr(c, "lock_type", type)
+        SessionVault.unlock(nk)
+        true
+    } catch (e: Exception) { false }
 
     fun myKey(c: Context): String {
         val db = Db.get(c)
@@ -219,7 +310,7 @@ object Vault {
     }
 }
 
-/** Second passphrase: typing it at login wipes everything and opens a normal-looking EMPTY app. */
+/** Second secret (same type as your lock): entering it at login silently wipes everything and opens an EMPTY app. */
 object Duress {
     fun set(c: Context, code: String) {
         val salt = Crypto.random(16)
@@ -227,20 +318,27 @@ object Duress {
         Prefs.putStr(c, "duress_hash", Crypto.hex(Crypto.kdf(code, salt, Vault.LOGN)))
     }
 
-    fun isSet(c: Context): Boolean = Prefs.str(c, "duress_hash") != null
+    fun clear(c: Context) {
+        Prefs.putStr(c, "duress_hash", "")
+        Prefs.putStr(c, "duress_salt", "")
+    }
+
+    fun isSet(c: Context): Boolean = !Prefs.str(c, "duress_hash").isNullOrEmpty()
 
     fun matches(c: Context, code: String): Boolean {
-        val h = Prefs.str(c, "duress_hash") ?: return false
-        val s = Prefs.str(c, "duress_salt") ?: return false
+        val h = Prefs.str(c, "duress_hash")
+        val s = Prefs.str(c, "duress_salt")
+        if (h.isNullOrEmpty() || s.isNullOrEmpty()) return false
         return Crypto.constEq(h, Crypto.hex(Crypto.kdf(code, Base64.decode(s, Base64.NO_WRAP), Vault.LOGN)))
     }
 
     fun wipeAll(c: Context) {
-        SessionVault.lock()
+        SessionVault.lockAll()
         c.deleteDatabase(Db.NAME)
         Spool.clear(c)
         Files.clear(c)
         Prefs.clear(c)
+        DevKey.destroy()
         try { NotificationManagerCompat.from(c).cancelAll() } catch (e: Exception) { }
     }
 }
