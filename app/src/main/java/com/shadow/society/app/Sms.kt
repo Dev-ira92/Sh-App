@@ -1,5 +1,7 @@
 package com.shadow.society.app
 
+import android.app.Activity
+import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -12,7 +14,7 @@ import java.util.TreeMap
 
 /**
  * One SMS per fragment:  TXT|uuid8|index|total|base64chunk
- * The joined Base64 decodes to [mode][data]: mode 0 = plain text, mode 1 = IV+AES-GCM ciphertext.
+ * The joined Base64 decodes to [mode][data]: mode 0 = plain text (NOT secret), mode 1 = IV+AES-GCM ciphertext.
  */
 object Codec {
     const val CHUNK = 120
@@ -47,11 +49,71 @@ object Codec {
     }
 }
 
+/** Sends every fragment and asks Android to report "sent" and "delivered". */
 object Sender {
+    const val ACTION_SENT = "com.shadow.society.app.SMS_SENT"
+    const val ACTION_DELIVERED = "com.shadow.society.app.SMS_DELIVERED"
+
     @Suppress("DEPRECATION")
-    fun send(phone: String, payload: ByteArray) {
+    fun send(c: Context, phone: String, payload: ByteArray, msgId: Long) {
         val sm = SmsManager.getDefault()
-        Codec.encode(payload).forEach { sm.sendTextMessage(phone, null, it, null, null) }
+        val parts = Codec.encode(payload)
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        parts.forEachIndexed { i, p ->
+            val code = (msgId * 1000 + i).toInt()
+            val sentPi = PendingIntent.getBroadcast(c, code,
+                Intent(c, SmsStatusReceiver::class.java).setAction(ACTION_SENT)
+                    .putExtra("id", msgId).putExtra("total", parts.size), flags)
+            val delPi = if (i == parts.size - 1) PendingIntent.getBroadcast(c, code + 500000,
+                Intent(c, SmsStatusReceiver::class.java).setAction(ACTION_DELIVERED)
+                    .putExtra("id", msgId).putExtra("total", 1), flags) else null
+            sm.sendTextMessage(phone, null, p, sentPi, delPi)
+        }
+    }
+}
+
+/** Collects per-fragment results into one status: 1 sent, 2 failed, 3 delivered. */
+object StatusTracker {
+    private val okCount = HashMap<Long, Int>()
+
+    @Synchronized fun update(id: Long, total: Int, ok: Boolean, delivered: Boolean): Int? {
+        if (delivered) return if (ok) 3 else null
+        if (!ok) { okCount.remove(id); return 2 }
+        val n = (okCount[id] ?: 0) + 1
+        return if (n >= total) { okCount.remove(id); 1 } else { okCount[id] = n; null }
+    }
+
+    @Synchronized fun apply(c: Context, id: Long, st: Int) {
+        if (SessionVault.isUnlocked()) {
+            try { Messages.setStatus(c, id, st) } catch (e: Exception) { }
+            Inbox.notifyChanged()
+        } else {
+            Prefs.putStr(c, "st_pending", (Prefs.str(c, "st_pending") ?: "") + "$id:$st,")
+        }
+    }
+
+    /** Results that arrived while the vault was locked. */
+    @Synchronized fun flush(c: Context) {
+        val s = Prefs.str(c, "st_pending") ?: return
+        if (s.isEmpty()) return
+        for (item in s.split(",")) {
+            val p = item.split(":")
+            if (p.size != 2) continue
+            val id = p[0].toLongOrNull() ?: continue
+            val st = p[1].toIntOrNull() ?: continue
+            try { Messages.setStatus(c, id, st) } catch (e: Exception) { }
+        }
+        Prefs.putStr(c, "st_pending", "")
+    }
+}
+
+class SmsStatusReceiver : BroadcastReceiver() {
+    override fun onReceive(c: Context, i: Intent) {
+        val id = i.getLongExtra("id", -1L)
+        if (id < 0) return
+        val ok = resultCode == Activity.RESULT_OK
+        val st = StatusTracker.update(id, i.getIntExtra("total", 1), ok, i.action == Sender.ACTION_DELIVERED) ?: return
+        StatusTracker.apply(c, id, st)
     }
 }
 
@@ -97,9 +159,10 @@ object Inbox {
 
     fun notifyChanged() { listener?.let { main.post(it) } }
 
-    /** Joins fragments into messages and stores them. Needs the vault unlocked. */
-    @Synchronized fun drain(c: Context): Int {
+    /** Joins fragments into messages and stores them (tag 1 = imported). Needs the vault unlocked. */
+    @Synchronized fun drain(c: Context, tag: Int = 0): Int {
         if (!SessionVault.isUnlocked()) return 0
+        StatusTracker.flush(c)
         val rows = Spool.readAll(c)
         if (rows.isEmpty()) return 0
 
@@ -125,7 +188,7 @@ object Inbox {
                 newest = maxOf(newest, t)
             }
             if (byIdx.size == first.total) {
-                if (deliver(c, g[0][0], newest, byIdx.values.joinToString(""))) stored++
+                if (deliver(c, g[0][0], newest, byIdx.values.joinToString(""), tag)) stored++
             } else if (now - oldest < 24L * 3600 * 1000) {
                 keep.addAll(g)
             }
@@ -134,7 +197,7 @@ object Inbox {
         return stored
     }
 
-    private fun deliver(c: Context, sender: String, time: Long, b64: String): Boolean {
+    private fun deliver(c: Context, sender: String, time: Long, b64: String, tag: Int): Boolean {
         val data = try { Base64.decode(b64, Base64.NO_WRAP) } catch (e: IllegalArgumentException) { return false }
         if (data.size < 2) return false
         var ct = Contacts.byPhone(c, sender)
@@ -150,7 +213,7 @@ object Inbox {
             1 -> { cipher = true; body = Base64.encodeToString(data, 1, data.size - 1, Base64.NO_WRAP) }
             else -> return false
         }
-        Messages.insert(c, Msg(0, ct.id, body, false, time, false, cipher))
+        Messages.insert(c, Msg(0, ct.id, body, false, time, false, cipher, 1, tag))
         return true
     }
 }
