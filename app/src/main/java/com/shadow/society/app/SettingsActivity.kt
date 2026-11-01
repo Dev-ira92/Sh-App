@@ -2,9 +2,12 @@ package com.shadow.society.app
 
 import android.content.Intent
 import android.os.Bundle
+import android.view.Gravity
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -12,6 +15,7 @@ import android.widget.Toast
 class SettingsActivity : BaseActivity() {
     private val keyLengths = intArrayOf(10, 50, 100, 500, 1000)
     private val lockSecs = intArrayOf(0, 15, 30, 60, 300)
+    private val sizes = intArrayOf(100, 120, 150, 180, 220)
 
     private lateinit var keyView: TextView
     private lateinit var qr: ImageView
@@ -23,27 +27,85 @@ class SettingsActivity : BaseActivity() {
     private fun lockLabel(s: Int): String =
         if (s == 0) tr("immediately", "فوراً") else if (s < 60) "$s s" else "${s / 60} min"
 
+    private fun applyAndRebuild() { Neo.changed(this); recreate() }
+
+    private fun pick(title: String, labels: Array<String>, cb: (Int) -> Unit) = Dialogs.choose(this, title, labels, -1, cb)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (isFinishing) return
 
+        val outer = Neo.vertical(this)
+        val bar = LinearLayout(this)
+        bar.orientation = LinearLayout.HORIZONTAL
+        bar.gravity = Gravity.CENTER_VERTICAL
+        bar.setBackgroundColor(Neo.PANEL)
+        val bp = Neo.dp(this, 4)
+        bar.setPadding(bp, bp, bp, bp)
+        bar.addView(Icons.button(this, "back", Neo.BARTEXT) { finish() })
+        val title = Neo.text(this, tr("Settings", "تنظیمات"), 18, Neo.BARTEXT)
+        title.typeface = Neo.BOLD
+        bar.addView(title)
+        outer.addView(bar)
+
         val sv = ScrollView(this)
-        sv.setBackgroundColor(Neo.BG)
         val col = Neo.vertical(this)
         val p = Neo.dp(this, 16)
-        col.setPadding(p, p, p, p * 2)
+        col.setPadding(p, p / 2, p, p * 2)
         sv.addView(col)
+        outer.addView(sv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
-        col.addView(Neo.text(this, "> settings_", 20, Neo.GREEN))
+        // ---- Appearance ----
+        col.addView(Neo.section(this, tr("APPEARANCE", "ظاهر")))
+        val langBtn = Neo.button(this, tr("Language: ", "زبان: ") + (if (Lang.code == "en") "English" else "فارسی"))
+        Neo.add(col, langBtn, 4)
+        langBtn.setOnClickListener {
+            Dialogs.choose(this, tr("Language", "زبان"), arrayOf("فارسی", "English"), if (Lang.code == "en") 1 else 0) { w ->
+                Prefs.putStr(this, "lang", if (w == 1) "en" else "fa")
+                applyAndRebuild()
+            }
+        }
+        val themeBtn = Neo.button(this, tr("Theme: ", "تم: ") + Neo.themeName(Neo.P))
+        Neo.add(col, themeBtn, 8)
+        themeBtn.setOnClickListener {
+            val labels = Array(THEMES.size) { Neo.themeName(THEMES[it]) }
+            Dialogs.choose(this, tr("Theme", "تم"), labels, THEMES.indexOf(Neo.P)) { w ->
+                Prefs.putStr(this, "theme", THEMES[w].id)
+                applyAndRebuild()
+            }
+        }
+        val fontBtn = Neo.button(this, tr("Font size: ", "اندازه فونت: ") + Prefs.int(this, "font_pct", 150) + "%")
+        Neo.add(col, fontBtn, 8)
+        fontBtn.setOnClickListener {
+            pick(tr("Font size", "اندازه فونت"), Array(sizes.size) { sizes[it].toString() + "%" }) { w ->
+                Prefs.putInt(this, "font_pct", sizes[w])
+                applyAndRebuild()
+            }
+        }
+        val iconBtn = Neo.button(this, tr("Icon size: ", "اندازه آیکن: ") + Prefs.int(this, "icon_pct", 150) + "%")
+        Neo.add(col, iconBtn, 8)
+        iconBtn.setOnClickListener {
+            pick(tr("Icon size", "اندازه آیکن"), Array(sizes.size) { sizes[it].toString() + "%" }) { w ->
+                Prefs.putInt(this, "icon_pct", sizes[w])
+                applyAndRebuild()
+            }
+        }
+        val rainBtn = Neo.button(this, tr("Matrix rain: ", "بارش ماتریکس: ") +
+                (if (Prefs.int(this, "rain", 1) == 1) tr("ON", "روشن") else tr("OFF", "خاموش")))
+        Neo.add(col, rainBtn, 8)
+        rainBtn.setOnClickListener {
+            Prefs.putInt(this, "rain", if (Prefs.int(this, "rain", 1) == 1) 0 else 1)
+            applyAndRebuild()
+        }
 
         // ---- My key ----
         col.addView(Neo.section(this, tr("MY KEY (give it to your friend in person)", "کلید من (حضوری به دوستت بده)")))
-        keyView = Neo.text(this, "", 12, Neo.GREEN)
+        keyView = Neo.text(this, "", 12, Neo.TEXT)
         keyView.setTextIsSelectable(true)
         col.addView(keyView)
         qr = ImageView(this)
         Neo.add(col, qr, 10)
-        val regen = Neo.button(this, tr("[ 🎲 generate new key ]", "[ 🎲 ساخت کلید جدید ]"))
+        val regen = Neo.button(this, tr("🎲 generate new key", "🎲 ساخت کلید جدید"))
         Neo.add(col, regen, 10)
         regen.setOnClickListener {
             val labels = Array(keyLengths.size) {
@@ -66,7 +128,7 @@ class SettingsActivity : BaseActivity() {
         duress = Neo.input(this,
             if (Duress.isSet(this)) tr("(set) new duress code", "(تنظیم شده) رمز جدید") else tr("duress code", "رمز اضطراری"))
         Neo.add(col, duress, 8)
-        val setDuress = Neo.button(this, tr("[ save duress code ]", "[ ذخیره رمز اضطراری ]"))
+        val setDuress = Neo.button(this, tr("save duress code", "ذخیره رمز اضطراری"))
         Neo.add(col, setDuress, 8)
         setDuress.setOnClickListener { saveDuress() }
 
@@ -110,9 +172,9 @@ class SettingsActivity : BaseActivity() {
 
         // ---- Destroy ----
         col.addView(Neo.section(this, tr("DESTROY", "نابودی")))
-        val wipe = Neo.button(this, tr("[ ☠ hold to destroy everything ]", "[ ☠ نگه دارید تا همه‌چیز نابود شود ]"))
+        val wipe = Neo.button(this, tr("hold to destroy everything", "نگه دارید تا همه‌چیز نابود شود"))
         wipe.setTextColor(Neo.RED)
-        wipe.background = Neo.box(this, Neo.BG, Neo.RED, 4)
+        wipe.background = Neo.box(this, 0, Neo.RED, 8)
         Neo.add(col, wipe, 8)
         wipe.setOnLongClickListener {
             Duress.wipeAll(this)
@@ -121,7 +183,7 @@ class SettingsActivity : BaseActivity() {
             finish()
             true
         }
-        setContentView(sv)
+        setContentView(Neo.backdrop(this, outer))
     }
 
     override fun onReady() { refresh() }
@@ -132,8 +194,8 @@ class SettingsActivity : BaseActivity() {
         qr.setImageBitmap(Qr.render(k, Neo.dp(this, 260)))
         pulseBtn.text = tr("pulse: ", "نبض: ") + Pulse.label(Pulse.hours(this))
         lockBtn.text = tr("lock: ", "قفل: ") + lockLabel(Prefs.int(this, "autolock", 60))
-        lockdownBtn.text = if (Lockdown.isOn(this)) tr("[ lockdown: ON — tap to disable ]", "[ حالت قفل: روشن ]")
-                           else tr("[ lockdown: OFF — tap to enable ]", "[ حالت قفل: خاموش ]")
+        lockdownBtn.text = if (Lockdown.isOn(this)) tr("lockdown: ON — tap to disable", "حالت قفل: روشن")
+                           else tr("lockdown: OFF — tap to enable", "حالت قفل: خاموش")
     }
 
     private fun saveDuress() {
