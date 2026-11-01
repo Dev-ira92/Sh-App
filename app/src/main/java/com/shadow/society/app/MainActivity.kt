@@ -1,7 +1,6 @@
 package com.shadow.society.app
 
 import android.content.Intent
-import android.graphics.Typeface
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -10,13 +9,16 @@ import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
-import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 
-/** Login / vault creation. The passphrase derives the database key (scrypt). Wrong passphrase = DB won't open. */
+/**
+ * Login / vault creation.
+ * The LOGIN PASSPHRASE only opens the vault (it derives the database key) and is never shared.
+ * MY KEY is a different secret: you give it to your friends in person; it is part of every AES key.
+ */
 class MainActivity : AppCompatActivity() {
     private val ui = Handler(Looper.getMainLooper())
     private lateinit var pass: EditText
@@ -24,6 +26,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var go: Button
     private lateinit var status: TextView
     private var first = false
+    private var chosenKey = Crypto.randomKey(64)
+    private val keyLens = intArrayOf(10, 50, 100, 500, 1000)
+    private lateinit var keyView: TextView
 
     private companion object {
         const val OK = 0
@@ -33,6 +38,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Neo.styleWindow(this)
         if (Root.isRooted(this)) {
             val t = Neo.text(this, tr("> rooted device detected. access denied_", "> دستگاه روت شده شناسایی شد. دسترسی ممنوع_"), 16, Neo.RED)
             t.gravity = Gravity.CENTER
@@ -41,9 +47,6 @@ class MainActivity : AppCompatActivity() {
         }
         if (SessionVault.isUnlocked()) { openList(); return }
         first = !Vault.exists(this)
-
-        val root = FrameLayout(this)
-        root.addView(MatrixRainView(this))
 
         val sv = ScrollView(this)
         sv.isFillViewport = true
@@ -54,11 +57,11 @@ class MainActivity : AppCompatActivity() {
         wrap.setPadding(pad, pad, pad, pad)
 
         val card = Neo.vertical(this)
-        card.background = Neo.box(this, 0xDD000000.toInt(), Neo.DIM, 6)
+        card.background = Neo.box(this, Neo.withAlpha(Neo.BG, 0xDD), Neo.DIM, 10)
         card.setPadding(pad, pad, pad, pad)
 
-        val title = Neo.text(this, "Sh-So", 36, Neo.GREEN)
-        title.typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+        val title = Neo.text(this, "Sh-So", 36, Neo.ACCENT)
+        title.typeface = Neo.BOLD
         title.gravity = Gravity.CENTER
         card.addView(title)
 
@@ -67,14 +70,30 @@ class MainActivity : AppCompatActivity() {
         card.addView(slogan)
         typeText(slogan, "> " + tr("The dragon that breathes in the dark.", "اژدهایی که در تاریکی نفس می‌کشد.") + "_", 0)
 
-        pass = Neo.input(this, tr("passphrase", "رمز ورود"))
+        pass = Neo.input(this, tr("login passphrase", "رمز ورود"))
         pass.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         Neo.add(card, pass, 22)
         confirm = Neo.input(this, tr("repeat passphrase", "تکرار رمز"))
         confirm.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-        if (first) Neo.add(card, confirm, 8)
+        if (first) {
+            Neo.add(card, confirm, 8)
+            Neo.add(card, Neo.text(this, tr("MY KEY — give it to your friends in person (this is NOT your login password)",
+                "کلید من — حضوری به دوستانت بده (این رمز ورود نیست)"), 12, Neo.DIM), 18)
+            keyView = Neo.text(this, chosenKey, 12, Neo.TEXT)
+            keyView.setTextIsSelectable(true)
+            Neo.add(card, keyView, 4)
+            val gen = Neo.button(this, tr("🎲 generate new key", "🎲 ساخت کلید جدید"))
+            Neo.add(card, gen, 8)
+            gen.setOnClickListener {
+                Dialogs.choose(this, tr("Key length", "طول کلید"),
+                    Array(keyLens.size) { keyLens[it].toString() + " " + tr("characters", "کاراکتر") }, -1) { w ->
+                    chosenKey = Crypto.randomKey(keyLens[w])
+                    keyView.text = chosenKey
+                }
+            }
+        }
 
-        go = Neo.button(this, if (first) tr("[ create vault ]", "[ ساخت گاوصندوق ]") else tr("[ enter ]", "[ ورود ]"))
+        go = Neo.button(this, if (first) tr("create vault", "ساخت گاوصندوق") else tr("enter", "ورود"))
         Neo.add(card, go, 14)
         status = Neo.text(this,
             if (first) tr("min 8 characters. use a long phrase.", "حداقل ۸ کاراکتر. یک جمله‌ی بلند بهتر است.") else "", 12, Neo.DIM)
@@ -82,8 +101,7 @@ class MainActivity : AppCompatActivity() {
 
         wrap.addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         sv.addView(wrap, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        root.addView(sv)
-        setContentView(root)
+        setContentView(Neo.backdrop(this, sv, 0.8f))
 
         go.setOnClickListener { submit() }
     }
@@ -132,7 +150,7 @@ class MainActivity : AppCompatActivity() {
         Vault.createSalt(this)
         SessionVault.unlock(Vault.deriveDbKey(this, p))
         Db.get(this).db()
-        Vault.myKey(this)
+        if (first) Db.get(this).setMeta("my_key", chosenKey) else Vault.myKey(this)
     }
 
     private fun done(r: Int) {
