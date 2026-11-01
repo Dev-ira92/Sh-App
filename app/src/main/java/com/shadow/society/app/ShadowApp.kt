@@ -9,12 +9,17 @@ import android.os.Looper
 import android.os.SystemClock
 import android.view.WindowManager
 
-/** App-wide policy: theme load, FLAG_SECURE everywhere, auto-lock after leaving the app, Lockdown. */
+/**
+ * App-wide policy: theme load, FLAG_SECURE, and two separate timers after you leave the app:
+ *  - auto-lock: the database locks (login screen again)
+ *  - key clearing: friend/session keys are destroyed (when leaving / 10 min / 30 min / never)
+ */
 class ShadowApp : Application(), Application.ActivityLifecycleCallbacks {
     private var started = 0
     private var leftAt = 0L
     private val h = Handler(Looper.getMainLooper())
     private val lockTask = Runnable { if (started == 0) SessionVault.lock() }
+    private val keyTask = Runnable { if (started == 0) SessionVault.wipeKeys() }
 
     private fun autoLockSec(): Int = Prefs.int(this, "autolock", 60)
 
@@ -29,11 +34,15 @@ class ShadowApp : Application(), Application.ActivityLifecycleCallbacks {
     }
 
     override fun onActivityStarted(a: Activity) {
-        if (started == 0 && leftAt > 0 && SystemClock.elapsedRealtime() - leftAt > autoLockSec() * 1000L) {
-            SessionVault.lock()
+        if (started == 0 && leftAt > 0) {
+            val away = SystemClock.elapsedRealtime() - leftAt
+            if (away > autoLockSec() * 1000L) SessionVault.lock()
+            val km = KeyPolicy.minutes(this)
+            if (km >= 0 && away > km * 60000L) SessionVault.wipeKeys()
         }
         started++
         h.removeCallbacks(lockTask)
+        h.removeCallbacks(keyTask)
     }
 
     override fun onActivityStopped(a: Activity) {
@@ -43,6 +52,8 @@ class ShadowApp : Application(), Application.ActivityLifecycleCallbacks {
             leftAt = SystemClock.elapsedRealtime()
             val s = autoLockSec()
             if (s <= 0) SessionVault.lock() else h.postDelayed(lockTask, s * 1000L)
+            val km = KeyPolicy.minutes(this)
+            if (km == 0) SessionVault.wipeKeys() else if (km > 0) h.postDelayed(keyTask, km * 60000L)
         }
     }
 
