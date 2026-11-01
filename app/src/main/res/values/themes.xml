@@ -4,17 +4,34 @@
         <item name="colorPrimary">#000000</item>
         <item name="colorPrimaryDark">#000000</item>
         <item name="colorAccent">#00FF41</item>
-        <item name="colorControlNormal">#008F11</item>
         <item name="android:windowBackground">#000000</item>
-        <item name="android:statusBarColor">#000000</item>
-        <item name="android:navigationBarColor">#000000</item>
-        <item name="android:textColorPrimary">#00FF41</item>
-        <item name="alertDialogTheme">@style/Theme.ShSo.Alert</item>
     </style>
-    <style name="Theme.ShSo.Alert" parent="Theme.AppCompat.Dialog.Alert">
-        <item name="android:windowBackground">#0A0F0A</item>
+
+    <style name="Alert.Matrix" parent="Theme.AppCompat.Dialog.Alert">
+        <item name="android:windowBackground">#E60A0F0A</item>
         <item name="android:textColorPrimary">#00FF41</item>
         <item name="android:textColorSecondary">#008F11</item>
         <item name="colorAccent">#00FF41</item>
+    </style>
+
+    <style name="Alert.Telegram" parent="Theme.AppCompat.Dialog.Alert">
+        <item name="android:windowBackground">#17212B</item>
+        <item name="android:textColorPrimary">#FFFFFF</item>
+        <item name="android:textColorSecondary">#7F91A4</item>
+        <item name="colorAccent">#5EB5F7</item>
+    </style>
+
+    <style name="Alert.WhatsApp" parent="Theme.AppCompat.Light.Dialog.Alert">
+        <item name="android:windowBackground">#FFFFFF</item>
+        <item name="android:textColorPrimary">#111B21</item>
+        <item name="android:textColorSecondary">#667781</item>
+        <item name="colorAccent">#128C7E</item>
+    </style>
+
+    <style name="Alert.Sms" parent="Theme.AppCompat.Light.Dialog.Alert">
+        <item name="android:windowBackground">#FFFFFF</item>
+        <item name="android:textColorPrimary">#202124</item>
+        <item name="android:textColorSecondary">#5F6368</item>
+        <item name="colorAccent">#1A73E8</item>
     </style>
 </resources>
