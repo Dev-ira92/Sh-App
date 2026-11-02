@@ -14,7 +14,8 @@ import java.util.TreeMap
 
 /**
  * One SMS per fragment:  TXT|uuid8|index|total|base64chunk
- * The joined Base64 decodes to [mode][data]: mode 0 = plain text (NOT secret), mode 1 = IV+AES-GCM ciphertext.
+ * The joined Base64 decodes to [mode][data]:
+ *   0 = plain text, 1 = IV+AES-GCM text, 2 = plain JPEG, 3 = IV+AES-GCM JPEG.
  */
 object Codec {
     const val CHUNK = 120
@@ -208,12 +209,15 @@ object Inbox {
         }
         val cipher: Boolean
         val body: String
+        var tg = tag
         when (data[0].toInt()) {
             0 -> { cipher = false; body = String(data, 1, data.size - 1) }
             1 -> { cipher = true; body = Base64.encodeToString(data, 1, data.size - 1, Base64.NO_WRAP) }
+            2 -> { cipher = false; body = Base64.encodeToString(data, 1, data.size - 1, Base64.NO_WRAP); tg = tag or 4 }
+            3 -> { cipher = true; body = Base64.encodeToString(data, 1, data.size - 1, Base64.NO_WRAP); tg = tag or 4 }
             else -> return false
         }
-        Messages.insert(c, Msg(0, ct.id, body, false, time, false, cipher, 1, tag))
+        Messages.insert(c, Msg(0, ct.id, body, false, time, false, cipher, 1, tg))
         return true
     }
 }
