@@ -1,11 +1,9 @@
 package com.shadow.society.app
 
-import android.graphics.BitmapFactory
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
-import android.util.Base64
 import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.EditText
@@ -71,7 +69,7 @@ class ChatActivity : BaseActivity() {
         lv.selector = ColorDrawable(0)
         lv.isStackFromBottom = true
         lv.transcriptMode = ListView.TRANSCRIPT_MODE_ALWAYS_SCROLL
-        adapter = ChatAdapter(this) { bytes -> viewImage(bytes) }
+        adapter = ChatAdapter(this) { m -> viewImage(m) }
         lv.adapter = adapter
         root.addView(lv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
@@ -126,6 +124,7 @@ class ChatActivity : BaseActivity() {
         Inbox.listener = Runnable { reload() }
         Thread {
             if (Inbox.drain(this) > 0) runOnUiThread { reload() }
+            ImgStore.sweep(this)
         }.start()
     }
 
@@ -233,7 +232,8 @@ class ChatActivity : BaseActivity() {
         val sms = channel() == 0
         val labels = Array(Media.PRESETS.size) {
             val p = Media.PRESETS[it]
-            p.label() + "  ≈ " + (p.bytes / 1000) + " KB  ·  ~" + Codec.estimateParts(p.bytes + 30) + " SMS"
+            if (p.bytes > 0) p.label() + "  ≈ " + (p.bytes / 1000) + " KB  ·  ~" + Codec.estimateParts(p.bytes + 30) + " SMS"
+            else p.label()
         }
         Dialogs.choose(this, tr("Image size", "اندازه‌ی عکس"), labels, 1) { w ->
             val preset = Media.PRESETS[w]
@@ -241,34 +241,51 @@ class ChatActivity : BaseActivity() {
                 toast(tr("This size is for TXT files only. Switch the channel to TXT.", "این اندازه فقط برای فایل txt است. مسیر را روی TXT بگذار."))
                 return@choose
             }
-            toast(tr("Preparing the image…", "در حال آماده‌سازی عکس…"))
-            Thread {
-                val jpeg = Media.compress(this, uri, preset.side, preset.bytes)
-                runOnUiThread {
-                    if (jpeg == null) {
-                        toast(tr("Could not read the image", "عکس خوانده نشد"))
-                    } else {
-                        sendImage(c, jpeg, sms)
-                    }
+            if (preset.mode == 2) {
+                Dialogs.confirm(this, tr("The original file also contains the photo's location (GPS) and camera details, and it will be sent as it is. Continue?",
+                    "فایل اصلی شامل موقعیت مکانی (GPS) و مشخصات دوربین هم هست و همان‌طور که هست فرستاده می‌شود. ادامه؟")) {
+                    prepareAndSend(c, uri, preset, sms)
                 }
-            }.start()
+            } else {
+                prepareAndSend(c, uri, preset, sms)
+            }
         }
     }
 
-    private fun sendImage(c: Contact, jpeg: ByteArray, sms: Boolean) {
+    private fun prepareAndSend(c: Contact, uri: Uri, preset: Media.Preset, sms: Boolean) {
+        toast(tr("Preparing the image…", "در حال آماده‌سازی عکس…"))
+        Thread {
+            val img = Media.prepare(this, uri, preset)
+            runOnUiThread {
+                if (img == null) {
+                    toast(tr("Could not read the image, or it is larger than 8 MB. Try 'Full size'.",
+                        "عکس خوانده نشد یا بزرگ‌تر از ۸ مگابایت است. «اندازه‌ی کامل» را امتحان کن."))
+                } else {
+                    sendImage(c, img, sms)
+                }
+            }
+        }.start()
+    }
+
+    private fun sendImage(c: Contact, img: ByteArray, sms: Boolean) {
         val key: ByteArray? = if (c.level == 1) SessionVault.key(c.id) else null
         if (c.level == 1 && key == null) { unlock(); return }
-        val payload = Media.imagePayload(key, jpeg)
-        val kb = maxOf(1, jpeg.size / 1024)
+        val payload = Media.imagePayload(key, img)
+        val kb = maxOf(1, img.size / 1024)
         val warn = if (c.level == 1) "" else "\n\n" + tr("⚠ This contact is at the plain (Shadow) level: the image is NOT encrypted.",
             "⚠ این مخاطب سطح ساده (سایه) است: عکس رمزنگاری نمی‌شود.")
 
         if (!sms) {
-            val now = System.currentTimeMillis()
-            val f = Media.exportImage(this, c, payload, now)
-            Messages.insert(this, Msg(0, c.id, Base64.encodeToString(jpeg, Base64.NO_WRAP), true, now, true, false, 1, 2 or 4))
-            reload()
-            offerShare(f, "$kb KB " + tr("image exported as a file", "عکس به صورت فایل خروجی گرفته شد") + warn)
+            Thread {
+                val now = System.currentTimeMillis()
+                val f = Media.exportImage(this, c, payload, now)
+                val (body, extra) = Media.store(this, img)
+                Messages.insert(this, Msg(0, c.id, body, true, now, true, false, 1, 2 or 4 or extra))
+                runOnUiThread {
+                    reload()
+                    offerShare(f, "$kb KB " + tr("image exported as a file", "عکس به صورت فایل خروجی گرفته شد") + warn)
+                }
+            }.start()
             return
         }
 
@@ -281,8 +298,8 @@ class ChatActivity : BaseActivity() {
         Dialogs.confirm(this, "$kb KB → $parts SMS\n" +
                 tr("Sending takes a while and your operator may charge for each SMS. Send?",
                     "ارسال زمان می‌برد و ممکن است اپراتور برای هر پیامک هزینه بگیرد. ارسال شود؟") + warn) {
-            val id = Messages.insert(this, Msg(0, c.id, Base64.encodeToString(jpeg, Base64.NO_WRAP), true,
-                System.currentTimeMillis(), true, false, 0, 4))
+            val (body, extra) = Media.store(this, img)
+            val id = Messages.insert(this, Msg(0, c.id, body, true, System.currentTimeMillis(), true, false, 0, 4 or extra))
             try {
                 SimSender.send(this, c.phone, payload, id, Sims.current(this, c.id))
             } catch (e: Exception) {
@@ -292,20 +309,30 @@ class ChatActivity : BaseActivity() {
         }
     }
 
-    private fun viewImage(bytes: ByteArray) {
-        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return
-        val iv = ImageView(this)
-        iv.setImageBitmap(bmp)
-        iv.adjustViewBounds = true
-        val q = Neo.dp(this, 12)
-        iv.setPadding(q, q, q, q)
-        Neo.dialog(this).setView(iv)
-            .setPositiveButton(tr("Share…", "ارسال…")) { _, _ ->
-                Dialogs.confirm(this, tr("The shared photo is NOT encrypted. Continue?", "عکسِ ارسالی رمزنگاری نیست. ادامه؟")) {
-                    Files.share(this, Media.saveJpeg(this, bytes), "image/jpeg")
+    private fun viewImage(m: Msg) {
+        toast(tr("Opening…", "در حال باز کردن…"))
+        Thread {
+            val b = Media.imageBytes(this, m)
+            val bmp = if (b != null) Media.decodeScaled(b, 2048) else null
+            runOnUiThread {
+                if (b == null || bmp == null) {
+                    toast(tr("Cannot open the image", "تصویر باز نشد"))
+                    return@runOnUiThread
                 }
+                val iv = ImageView(this)
+                iv.setImageBitmap(bmp)
+                iv.adjustViewBounds = true
+                val q = Neo.dp(this, 12)
+                iv.setPadding(q, q, q, q)
+                Neo.dialog(this).setView(iv)
+                    .setPositiveButton(tr("Share…", "ارسال…")) { _, _ ->
+                        Dialogs.confirm(this, tr("The shared photo is NOT encrypted. Continue?", "عکسِ ارسالی رمزنگاری نیست. ادامه؟")) {
+                            Files.share(this, Media.saveImage(this, b), Media.mime(b))
+                        }
+                    }
+                    .setNegativeButton(tr("Close", "بستن"), null).show()
             }
-            .setNegativeButton(tr("Close", "بستن"), null).show()
+        }.start()
     }
 
     // ---------- export ----------
@@ -325,10 +352,15 @@ class ChatActivity : BaseActivity() {
 
     private fun doExport(readable: Boolean) {
         val c = contact ?: return
-        val r = Media.exportChat(this, c, readable)
-        reload()
-        offerShare(r.file, "${r.count} " + tr("messages exported", "پیام خروجی گرفته شد") +
-                (if (r.skipped > 0) "\n${r.skipped} " + tr("skipped (no key)", "رد شد (کلید نیست)") else ""))
+        toast(tr("Preparing the file…", "در حال ساخت فایل…"))
+        Thread {
+            val r = Media.exportChat(this, c, readable)
+            runOnUiThread {
+                reload()
+                offerShare(r.file, "${r.count} " + tr("messages exported", "پیام خروجی گرفته شد") +
+                        (if (r.skipped > 0) "\n${r.skipped} " + tr("skipped (no key)", "رد شد (کلید نیست)") else ""))
+            }
+        }.start()
     }
 
     private fun exportTyped() {
@@ -361,19 +393,27 @@ class ChatActivity : BaseActivity() {
 
     private fun onFilePicked(uri: Uri) {
         val c = contact ?: return
-        val text = Files.readUri(this, uri)
-        if (text == null) { toast(tr("cannot read file", "فایل خوانده نشد")); return }
-        val labels = arrayOf(tr("from my contact", "از طرف مخاطب من"), tr("my own backup", "پشتیبان خودم"))
-        Dialogs.choose(this, tr("This file is…", "این فایل…"), labels, 0) { w ->
-            Thread {
-                val r = Media.importFile(this, c, text, w == 0)
-                runOnUiThread {
-                    reload()
-                    Dialogs.info(this, tr("Import finished", "ایمپورت انجام شد"),
-                        "${r.imported} " + tr("messages imported", "پیام وارد شد") +
-                                (if (r.ignored > 0) "\n${r.ignored} " + tr("ignored (duplicate/invalid)", "نادیده (تکراری/نامعتبر)") else ""))
+        toast(tr("Reading the file…", "در حال خواندن فایل…"))
+        Thread {
+            val text = Media.readText(this, uri)
+            runOnUiThread {
+                if (text == null) {
+                    toast(tr("cannot read file (or it is too big)", "فایل خوانده نشد (یا خیلی بزرگ است)"))
+                } else {
+                    val labels = arrayOf(tr("from my contact", "از طرف مخاطب من"), tr("my own backup", "پشتیبان خودم"))
+                    Dialogs.choose(this, tr("This file is…", "این فایل…"), labels, 0) { w ->
+                        Thread {
+                            val r = Media.importFile(this, c, text, w == 0)
+                            runOnUiThread {
+                                reload()
+                                Dialogs.info(this, tr("Import finished", "ایمپورت انجام شد"),
+                                    "${r.imported} " + tr("messages imported", "پیام وارد شد") +
+                                            (if (r.ignored > 0) "\n${r.ignored} " + tr("ignored (duplicate/invalid)", "نادیده (تکراری/نامعتبر)") else ""))
+                            }
+                        }.start()
+                    }
                 }
-            }.start()
-        }
+            }
+        }.start()
     }
 }
