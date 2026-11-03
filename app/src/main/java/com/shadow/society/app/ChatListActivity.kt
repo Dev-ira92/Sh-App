@@ -29,6 +29,12 @@ class ChatListActivity : BaseActivity() {
         val title = Neo.glow(Neo.text(this, "Sh-So", 22, Neo.BARTEXT))
         title.typeface = Neo.BOLD
         bar.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        val net = Neo.text(this, "🌐", 16, Neo.BARTEXT)
+        net.setPadding(Neo.dp(this, 10), Neo.dp(this, 6), Neo.dp(this, 10), Neo.dp(this, 6))
+        net.setOnClickListener { startActivity(Intent(this, OnlineActivity::class.java)) }
+        bar.addView(net)
+
         bar.addView(Icons.button(this, "key", Neo.BARTEXT) { startActivity(Intent(this, KeyActivity::class.java)) })
         bar.addView(Icons.button(this, "tune", Neo.BARTEXT) { startActivity(Intent(this, SettingsActivity::class.java)) })
         val panicBtn = Icons.button(this, "alert", Neo.BARTEXT) {
@@ -86,12 +92,13 @@ class ChatListActivity : BaseActivity() {
             }
             true
         }
-        Perms.request(this)
     }
 
     override fun onReady() {
+        SmsPerm.ensure(this, false)
         reload()
         Inbox.listener = Runnable { reload() }
+        OnlinePoll.start(this)
         Thread {
             if (Inbox.drain(this) > 0) runOnUiThread { reload() }
         }.start()
@@ -100,6 +107,7 @@ class ChatListActivity : BaseActivity() {
     override fun onPause() {
         super.onPause()
         Inbox.listener = null
+        OnlinePoll.stop()
     }
 
     private fun reload() {
