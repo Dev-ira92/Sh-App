@@ -156,21 +156,39 @@ object KeyMixer {
     }
 }
 
-/** RAM-only keys. Nothing here touches the disk. */
+/**
+ * Session keys live in RAM. If you choose a "kept in the vault" option in Settings, each key is also
+ * stored inside the encrypted database (with an expiry) so it survives the app being closed by the phone.
+ */
 object SessionVault {
     private class Entry(val key: ByteArray, val deadline: Long)
 
     private var k: String? = null
     private val keys = HashMap<Long, Entry>()
+    private var appCtx: Context? = null
+    @Volatile private var needRestore = true
+
+    fun init(c: Context) { appCtx = c.applicationContext }
 
     @Synchronized fun unlock(key: String) { k = key }
     @Synchronized fun isUnlocked(): Boolean = k != null
     @Synchronized fun dbKey(): String = k ?: throw IllegalStateException("locked")
 
-    @Synchronized fun putKey(c: Context, id: Long, key: ByteArray) {
-        keys[id]?.key?.fill(0)
+    private fun unhex(s: String): ByteArray = ByteArray(s.length / 2) { s.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
+
+    fun putKey(c: Context, id: Long, key: ByteArray) {
+        val ph = KeyPolicy.persistHours(c)
         val h = Pulse.hours(c)
-        keys[id] = Entry(key, if (h > 0) SystemClock.elapsedRealtime() + h * 3600000L else Long.MAX_VALUE)
+        val life = if (ph > 0) ph * 3600000L else if (h > 0) h * 3600000L else Long.MAX_VALUE
+        synchronized(this) {
+            keys[id]?.key?.fill(0)
+            keys[id] = Entry(key, if (life == Long.MAX_VALUE) Long.MAX_VALUE else SystemClock.elapsedRealtime() + life)
+        }
+        if (ph > 0 && isUnlocked()) {
+            try {
+                Db.get(c).setMeta("sk_$id", Crypto.hex(key) + "|" + (System.currentTimeMillis() + life))
+            } catch (e: Exception) { }
+        }
     }
 
     @Synchronized fun key(id: Long): ByteArray? {
@@ -188,13 +206,67 @@ object SessionVault {
         }
     }
 
-    @Synchronized fun wipeKeys() { keys.values.forEach { it.key.fill(0) }; keys.clear() }
+    /** Stores the keys that are in RAM into the vault (used when you switch to a "kept in the vault" option). */
+    fun persistAll(c: Context) {
+        val ph = KeyPolicy.persistHours(c)
+        if (ph <= 0 || !isUnlocked()) return
+        val snap = synchronized(this) { keys.entries.map { Pair(it.key, it.value.key.copyOf()) } }
+        for ((id, key) in snap) {
+            try {
+                Db.get(c).setMeta("sk_$id", Crypto.hex(key) + "|" + (System.currentTimeMillis() + ph * 3600000L))
+            } catch (e: Exception) { }
+        }
+    }
+
+    /** Deletes the keys stored inside the vault. */
+    fun wipeStored(c: Context) {
+        if (!isUnlocked()) return
+        try { Db.get(c).db().execSQL("DELETE FROM meta WHERE substr(k,1,3)='sk_'") } catch (e: Exception) { }
+    }
+
+    private fun restoreAll(c: Context) {
+        val rows = ArrayList<Pair<String, String>>()
+        Db.get(c).db().rawQuery("SELECT k, v FROM meta WHERE substr(k,1,3)='sk_'", null).use { cur ->
+            while (cur.moveToNext()) rows.add(Pair(cur.getString(0), cur.getString(1) ?: ""))
+        }
+        val nowWall = System.currentTimeMillis()
+        for ((k0, v) in rows) {
+            val id = k0.substring(3).toLongOrNull() ?: continue
+            val p = v.split("|")
+            val exp = p.getOrNull(1)?.toLongOrNull()
+            if (p.size != 2 || exp == null || exp <= nowWall) {
+                Db.get(c).db().execSQL("DELETE FROM meta WHERE k=?", arrayOf<Any?>(k0))
+                continue
+            }
+            val bytes = try { unhex(p[0]) } catch (e: Exception) { continue }
+            if (bytes.size != 32) continue
+            synchronized(this) {
+                if (!keys.containsKey(id)) keys[id] = Entry(bytes, SystemClock.elapsedRealtime() + (exp - nowWall))
+            }
+        }
+    }
+
+    /** After the app was closed and you logged in again: bring the stored keys back into RAM (once). */
+    fun restoreIfNeeded(c: Context) {
+        if (!needRestore || !isUnlocked() || KeyPolicy.persistHours(c) <= 0) return
+        needRestore = false
+        try { restoreAll(c) } catch (e: Exception) { needRestore = true }
+    }
+
+    fun wipeKeys() {
+        synchronized(this) {
+            keys.values.forEach { it.key.fill(0) }
+            keys.clear()
+        }
+        val c = appCtx
+        if (c != null && KeyPolicy.persistHours(c) > 0) wipeStored(c)
+    }
 
     /** Locks the database only. Session keys stay in RAM (see KeyPolicy). */
     @Synchronized fun lock() { k = null; Db.close() }
 
-    /** Locks the database AND destroys every session key. */
-    @Synchronized fun lockAll() { wipeKeys(); lock() }
+    /** Locks the database AND destroys every session key (also the ones stored in the vault). */
+    fun lockAll() { wipeKeys(); lock() }
 }
 
 /** Dragon's Pulse: session keys self-destruct after N hours. */
@@ -205,14 +277,32 @@ object Pulse {
     fun label(h: Int): String = if (h == 0) tr("Off", "خاموش") else "$h h"
 }
 
-/** When are session keys cleared after you leave the app? 0 = at once, 10 / 30 minutes, -1 = never. */
+/**
+ * What happens to session keys after you leave the app:
+ *   0 = cleared at once, 10 / 30 = cleared after that many minutes, -1 = never (RAM only),
+ *   1000 + H = kept inside the encrypted vault for H hours (survives the phone closing the app).
+ */
 object KeyPolicy {
-    val OPTIONS = intArrayOf(0, 10, 30, -1)
+    val OPTIONS = intArrayOf(0, 10, 30, -1, 1001, 1008, 1024, 1168)
+
     fun minutes(c: Context): Int = Prefs.int(c, "key_clear", 10)
-    fun set(c: Context, m: Int) { Prefs.putInt(c, "key_clear", m) }
-    fun label(m: Int): String = when (m) {
-        0 -> tr("when I leave the app", "هنگام خروج از برنامه")
-        -1 -> tr("never (until the app is closed)", "هرگز پاک نشود")
+    fun persistHours(c: Context): Int { val m = minutes(c); return if (m >= 1000) m - 1000 else 0 }
+
+    /** The "clear from RAM after N minutes" part (-1 when the keys are kept in the vault). */
+    fun ramMinutes(c: Context): Int { val m = minutes(c); return if (m >= 1000) -1 else m }
+
+    fun set(c: Context, m: Int) {
+        Prefs.putInt(c, "key_clear", m)
+        if (m >= 1000) SessionVault.persistAll(c) else SessionVault.wipeStored(c)
+    }
+
+    private fun hoursLabel(h: Int): String =
+        if (h % 24 == 0) "${h / 24} " + tr("days", "روز") else "$h " + tr("hours", "ساعت")
+
+    fun label(m: Int): String = when {
+        m == 0 -> tr("when I leave the app", "هنگام خروج از برنامه")
+        m == -1 -> tr("never (memory only; lost if the phone closes the app)", "هرگز (فقط حافظه؛ اگر گوشی برنامه را ببندد از بین می‌رود)")
+        m >= 1000 -> tr("kept in the encrypted vault for ", "نگهداری داخل گاوصندوق رمزشده تا ") + hoursLabel(m - 1000)
         else -> "$m " + tr("minutes", "دقیقه")
     }
 }
