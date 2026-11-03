@@ -4,6 +4,7 @@ import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
+import android.util.Base64
 import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.EditText
@@ -16,14 +17,13 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.widget.doAfterTextChanged
 import java.io.File
 
-class ChatActivity : BaseActivity() {
+class ChatActivity : OnlineBase() {
     private var contact: Contact? = null
     private var contactId = -1L
     private lateinit var adapter: ChatAdapter
     private lateinit var input: EditText
     private lateinit var header: TextView
     private lateinit var counter: TextView
-    private lateinit var chip: TextView
 
     private val pickLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) onFilePicked(uri)
@@ -51,11 +51,10 @@ class ChatActivity : BaseActivity() {
         header.typeface = Neo.BOLD
         bar.addView(header, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
-        val simBtn = Neo.text(this, "SIM", 12, Neo.BARTEXT)
-        simBtn.background = Neo.box(this, 0, Neo.BARTEXT, 6)
-        simBtn.setPadding(Neo.dp(this, 8), Neo.dp(this, 4), Neo.dp(this, 8), Neo.dp(this, 4))
-        simBtn.setOnClickListener { chooseSim() }
-        bar.addView(simBtn)
+        val net = Neo.text(this, "🌐", 16, Neo.BARTEXT)
+        net.setPadding(Neo.dp(this, 10), Neo.dp(this, 6), Neo.dp(this, 10), Neo.dp(this, 6))
+        net.setOnClickListener { addrDialog() }
+        bar.addView(net)
 
         bar.addView(Icons.button(this, "key", Neo.BARTEXT) { unlock() })
         bar.addView(Icons.button(this, "download", Neo.BARTEXT) { importMenu() })
@@ -90,15 +89,6 @@ class ChatActivity : BaseActivity() {
         input.maxLines = 4
         row.addView(input, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
-        val cp = Neo.dp(this, 8)
-        chip = Neo.text(this, "", 11, Neo.ACCENT)
-        chip.background = Neo.box(this, 0, Neo.ACCENT, 10)
-        chip.setPadding(cp, cp / 2, cp, cp / 2)
-        chip.setOnClickListener { chooseChannel() }
-        val clp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        clp.setMargins(p / 3, 0, 0, 0)
-        row.addView(chip, clp)
-
         val sendBtn = Icons.button(this, "send", Neo.P.onAccent) { send() }
         val oval = GradientDrawable()
         oval.shape = GradientDrawable.OVAL
@@ -118,10 +108,10 @@ class ChatActivity : BaseActivity() {
         if (c == null) { finish(); return }
         contact = c
         header.text = c.name + "\n" + c.phone + "  " + (if (c.level == 1) "🔴" else "🟢")
-        updateChip()
         updateCounter(input.text.toString())
         reload()
         Inbox.listener = Runnable { reload() }
+        OnlinePoll.start(this)
         Thread {
             if (Inbox.drain(this) > 0) runOnUiThread { reload() }
             ImgStore.sweep(this)
@@ -131,6 +121,7 @@ class ChatActivity : BaseActivity() {
     override fun onPause() {
         super.onPause()
         Inbox.listener = null
+        OnlinePoll.stop()
     }
 
     private fun toast(s: String) { Toast.makeText(this, s, Toast.LENGTH_SHORT).show() }
@@ -142,44 +133,91 @@ class ChatActivity : BaseActivity() {
         adapter.set(Messages.list(this, c.id))
     }
 
-    // ---------- channel ----------
-    private fun channel(): Int = Prefs.int(this, "chan_c$contactId", 0)
-
-    private fun updateChip() {
-        chip.text = if (channel() == 0) "📶 SMS" else "📄 TXT"
-    }
-
-    private fun chooseChannel() {
-        val labels = arrayOf(
-            tr("📶 SMS (offline)", "📶 پیامک (آفلاین)"),
-            tr("📄 TXT file → send with any app", "📄 فایل txt ← ارسال با هر برنامه"))
-        Dialogs.choose(this, tr("Send through", "ارسال از طریق"), labels, channel()) { w ->
-            Prefs.putInt(this, "chan_c$contactId", w)
-            updateChip()
-            updateCounter(input.text.toString())
-        }
-    }
-
     private fun updateCounter(t: String) {
         val c = contact ?: return
         val bytes = t.toByteArray().size + 1 + (if (c.level == 1) 28 else 0)
-        val parts = if (t.isEmpty()) "" else if (channel() == 0) "   ~" + Codec.estimateParts(bytes) + " SMS" else "   TXT"
+        val parts = if (t.isEmpty()) "" else "   ~" + Codec.estimateParts(bytes) + " SMS"
         counter.text = if (c.level == 1) "🔴 AES-256-GCM$parts"
                        else "🟢 " + tr("plain text — NOT secret", "متن ساده — محرمانه نیست") + parts
-    }
-
-    // ---------- SIM ----------
-    private fun chooseSim() {
-        val c = contact ?: return
-        Sims.choose(this, "sim_c${c.id}", true) {
-            toast(tr("SIM: ", "سیم‌کارت: ") + Sims.label(this, Sims.current(this, c.id)))
-        }
     }
 
     // ---------- keys ----------
     private fun unlock() {
         val c = contact ?: return
         showUnlock(this, c, this::scanKey) { reload() }
+    }
+
+    // ---------- the contact's online address ----------
+    private fun addrDialog() {
+        val c = contact ?: return
+        val a = Online.addrOf(this, c.id)
+        val msg = if (a == null) {
+            tr("No online address yet. Ask your contact to send theirs (QR / file / text).",
+                "هنوز آدرس آنلاین ندارد. از مخاطبت بخواه آدرسش را بفرستد (QR / فایل / متن).")
+        } else {
+            tr("Server: ", "سرور: ") + Online.host(a.u) + "\n" + tr("Inbox: ", "صندوق: ") + a.i.take(8) + "…"
+        }
+        Neo.dialog(this).setTitle("🌐 " + c.name).setMessage(msg)
+            .setPositiveButton(tr("Import address", "وارد کردن آدرس")) { _, _ ->
+                importRaw(tr("Contact's online address", "آدرس آنلاین مخاطب")) { raw ->
+                    val ad = OnlineParse.addr(raw)
+                    if (ad == null) {
+                        toast(tr("This is not an online address", "این آدرس آنلاین نیست"))
+                    } else {
+                        Online.saveAddr(this, c.id, ad)
+                        toast(tr("Address saved", "آدرس ذخیره شد"))
+                    }
+                }
+            }
+            .setNeutralButton(tr("Remove", "حذف")) { _, _ ->
+                Online.clearAddr(this, c.id)
+                toast(tr("Address removed", "آدرس حذف شد"))
+            }
+            .setNegativeButton(tr("Close", "بستن"), null).show()
+    }
+
+    private fun onlineReady(c: Contact): Boolean {
+        if (Online.mine(this) == null) {
+            Dialogs.confirm(this, tr("Online is not set up yet. Open the settings?", "حالت آنلاین هنوز تنظیم نشده. تنظیمات باز شود؟")) {
+                startActivity(android.content.Intent(this, OnlineActivity::class.java))
+            }
+            return false
+        }
+        if (Online.addrOf(this, c.id) == null) {
+            Dialogs.confirm(this, tr("This contact has no online address yet. Set it now?", "این مخاطب هنوز آدرس آنلاین ندارد. حالا تنظیم شود؟")) {
+                addrDialog()
+            }
+            return false
+        }
+        return true
+    }
+
+    private fun smsOk(c: Contact): Boolean {
+        if (c.phone.startsWith("ol:")) {
+            toast(tr("This contact has no phone number. Edit the contact first.", "این مخاطب شماره ندارد. اول ویرایشش کن."))
+            return false
+        }
+        return SmsPerm.ensure(this, true)
+    }
+
+    private fun guardPlain(c: Contact, ch: SendFlow.Choice, go: () -> Unit) {
+        if (c.level == 0 && ch.kind != 0) {
+            Dialogs.confirm(this, tr("This contact is at the plain level: the message is NOT encrypted and the server / app can read it. Continue?",
+                "این مخاطب سطح ساده است: پیام رمزنگاری نمی‌شود و سرور / برنامه می‌تواند آن را بخواند. ادامه؟"), go)
+        } else {
+            go()
+        }
+    }
+
+    private fun sendOnline(c: Contact, id: Long, payload: ByteArray, ts: Long) {
+        Thread {
+            val err = Online.send(this, c.id, payload, ts)
+            try { Messages.setStatus(this, id, if (err == null) 1 else 2) } catch (e: Exception) { }
+            runOnUiThread {
+                if (err != null) Toast.makeText(this, err, Toast.LENGTH_LONG).show()
+                reload()
+            }
+        }.start()
     }
 
     // ---------- send text ----------
@@ -198,23 +236,30 @@ class ChatActivity : BaseActivity() {
         if (text.isEmpty()) return
         if (text.length > 500) { toast(tr("max 500 characters", "حداکثر ۵۰۰ کاراکتر")); return }
         val payload = textPayload(c, text) ?: return
+        SendFlow.ask(this, c) { ch -> guardPlain(c, ch) { dispatchText(c, text, payload, ch) } }
+    }
 
-        if (channel() == 1) {
-            val now = System.currentTimeMillis()
-            val f = Files.exportMessage(this, c, payload, now)
-            Messages.insert(this, Msg(0, c.id, text, true, now, true, false, 1, 2))
-            input.setText("")
-            reload()
-            offerShare(f, tr("1 message exported as a file", "۱ پیام به صورت فایل خروجی گرفته شد"))
-            return
-        }
-
-        if (!Perms.hasSend(this)) { Perms.request(this); return }
-        val id = Messages.insert(this, Msg(0, c.id, text, true, System.currentTimeMillis(), true, false, 0, 0))
-        try {
-            SimSender.send(this, c.phone, payload, id, Sims.current(this, c.id))
-        } catch (e: Exception) {
-            Messages.setStatus(this, id, 2)
+    private fun dispatchText(c: Contact, text: String, payload: ByteArray, ch: SendFlow.Choice) {
+        val now = System.currentTimeMillis()
+        when (ch.kind) {
+            0 -> {
+                if (!smsOk(c)) return
+                val id = Messages.insert(this, Msg(0, c.id, text, true, now, true, false, 0, 0))
+                try { SimSender.send(this, c.phone, payload, id, ch.subId) } catch (e: Exception) { Messages.setStatus(this, id, 2) }
+            }
+            1 -> {
+                if (!onlineReady(c)) return
+                val id = Messages.insert(this, Msg(0, c.id, text, true, now, true, false, 0, 0))
+                sendOnline(c, id, payload, now)
+            }
+            else -> {
+                Messages.insert(this, Msg(0, c.id, text, true, now, true, false, 1, 2))
+                if (ch.asFile) {
+                    Files.share(this, Files.exportMessage(this, c, payload, now))
+                } else {
+                    SendFlow.shareText(this, "SHSO1|$now|S|" + Base64.encodeToString(payload, Base64.NO_WRAP))
+                }
+            }
         }
         input.setText("")
         reload()
@@ -229,30 +274,30 @@ class ChatActivity : BaseActivity() {
 
     private fun onImagePicked(uri: Uri) {
         val c = contact ?: return
-        val sms = channel() == 0
-        val labels = Array(Media.PRESETS.size) {
-            val p = Media.PRESETS[it]
+        SendFlow.ask(this, c) { ch -> guardPlain(c, ch) { chooseSize(c, uri, ch) } }
+    }
+
+    private fun chooseSize(c: Contact, uri: Uri, ch: SendFlow.Choice) {
+        val list = Media.PRESETS.filter { ch.kind != 0 || it.smsOk }
+        val labels = Array(list.size) {
+            val p = list[it]
             if (p.bytes > 0) p.label() + "  ≈ " + (p.bytes / 1000) + " KB  ·  ~" + Codec.estimateParts(p.bytes + 30) + " SMS"
             else p.label()
         }
-        Dialogs.choose(this, tr("Image size", "اندازه‌ی عکس"), labels, 1) { w ->
-            val preset = Media.PRESETS[w]
-            if (sms && !preset.smsOk) {
-                toast(tr("This size is for TXT files only. Switch the channel to TXT.", "این اندازه فقط برای فایل txt است. مسیر را روی TXT بگذار."))
-                return@choose
-            }
+        Dialogs.choose(this, tr("Image size", "اندازه‌ی عکس"), labels, -1) { w ->
+            val preset = list[w]
             if (preset.mode == 2) {
                 Dialogs.confirm(this, tr("The original file also contains the photo's location (GPS) and camera details, and it will be sent as it is. Continue?",
                     "فایل اصلی شامل موقعیت مکانی (GPS) و مشخصات دوربین هم هست و همان‌طور که هست فرستاده می‌شود. ادامه؟")) {
-                    prepareAndSend(c, uri, preset, sms)
+                    prepareAndSend(c, uri, preset, ch)
                 }
             } else {
-                prepareAndSend(c, uri, preset, sms)
+                prepareAndSend(c, uri, preset, ch)
             }
         }
     }
 
-    private fun prepareAndSend(c: Contact, uri: Uri, preset: Media.Preset, sms: Boolean) {
+    private fun prepareAndSend(c: Contact, uri: Uri, preset: Media.Preset, ch: SendFlow.Choice) {
         toast(tr("Preparing the image…", "در حال آماده‌سازی عکس…"))
         Thread {
             val img = Media.prepare(this, uri, preset)
@@ -261,51 +306,71 @@ class ChatActivity : BaseActivity() {
                     toast(tr("Could not read the image, or it is larger than 8 MB. Try 'Full size'.",
                         "عکس خوانده نشد یا بزرگ‌تر از ۸ مگابایت است. «اندازه‌ی کامل» را امتحان کن."))
                 } else {
-                    sendImage(c, img, sms)
+                    dispatchImage(c, img, ch)
                 }
             }
         }.start()
     }
 
-    private fun sendImage(c: Contact, img: ByteArray, sms: Boolean) {
+    private fun dispatchImage(c: Contact, img: ByteArray, ch: SendFlow.Choice) {
         val key: ByteArray? = if (c.level == 1) SessionVault.key(c.id) else null
         if (c.level == 1 && key == null) { unlock(); return }
         val payload = Media.imagePayload(key, img)
         val kb = maxOf(1, img.size / 1024)
-        val warn = if (c.level == 1) "" else "\n\n" + tr("⚠ This contact is at the plain (Shadow) level: the image is NOT encrypted.",
-            "⚠ این مخاطب سطح ساده (سایه) است: عکس رمزنگاری نمی‌شود.")
+        val now = System.currentTimeMillis()
 
-        if (!sms) {
-            Thread {
-                val now = System.currentTimeMillis()
-                val f = Media.exportImage(this, c, payload, now)
-                val (body, extra) = Media.store(this, img)
-                Messages.insert(this, Msg(0, c.id, body, true, now, true, false, 1, 2 or 4 or extra))
-                runOnUiThread {
-                    reload()
-                    offerShare(f, "$kb KB " + tr("image exported as a file", "عکس به صورت فایل خروجی گرفته شد") + warn)
+        when (ch.kind) {
+            0 -> {
+                val parts = Media.smsParts(payload)
+                if (parts > Media.MAX_SMS_PARTS) {
+                    toast(tr("Too big for SMS. Choose a smaller size or go online.", "برای پیامک بزرگ است. اندازه‌ی کوچک‌تر یا آنلاین را انتخاب کن."))
+                    return
                 }
-            }.start()
-            return
-        }
-
-        val parts = Media.smsParts(payload)
-        if (parts > Media.MAX_SMS_PARTS) {
-            toast(tr("Too big for SMS. Choose a smaller size or the TXT channel.", "برای پیامک بزرگ است. اندازه‌ی کوچک‌تر یا مسیر TXT را انتخاب کن."))
-            return
-        }
-        if (!Perms.hasSend(this)) { Perms.request(this); return }
-        Dialogs.confirm(this, "$kb KB → $parts SMS\n" +
-                tr("Sending takes a while and your operator may charge for each SMS. Send?",
-                    "ارسال زمان می‌برد و ممکن است اپراتور برای هر پیامک هزینه بگیرد. ارسال شود؟") + warn) {
-            val (body, extra) = Media.store(this, img)
-            val id = Messages.insert(this, Msg(0, c.id, body, true, System.currentTimeMillis(), true, false, 0, 4 or extra))
-            try {
-                SimSender.send(this, c.phone, payload, id, Sims.current(this, c.id))
-            } catch (e: Exception) {
-                Messages.setStatus(this, id, 2)
+                if (!smsOk(c)) return
+                Dialogs.confirm(this, "$kb KB → $parts SMS\n" +
+                        tr("Sending takes a while and your operator may charge for each SMS. Send?",
+                            "ارسال زمان می‌برد و ممکن است اپراتور برای هر پیامک هزینه بگیرد. ارسال شود؟")) {
+                    val st = Media.store(this, img)
+                    val id = Messages.insert(this, Msg(0, c.id, st.first, true, now, true, false, 0, 4 or st.second))
+                    try { SimSender.send(this, c.phone, payload, id, ch.subId) } catch (e: Exception) { Messages.setStatus(this, id, 2) }
+                    reload()
+                }
             }
-            reload()
+            1 -> {
+                if (payload.size > Online.MAX_BYTES) {
+                    toast(tr("Too big for the internal server (about 1 MB). Pick a smaller size or use 'Other app'.",
+                        "برای سرور داخلی بزرگ است (حدود ۱ مگابایت). اندازه‌ی کوچک‌تر یا «برنامه‌ی دیگر» را انتخاب کن."))
+                    return
+                }
+                if (!onlineReady(c)) return
+                Thread {
+                    val st = Media.store(this, img)
+                    val id = Messages.insert(this, Msg(0, c.id, st.first, true, now, true, false, 0, 4 or st.second))
+                    runOnUiThread { reload() }
+                    val err = Online.send(this, c.id, payload, now)
+                    try { Messages.setStatus(this, id, if (err == null) 1 else 2) } catch (e: Exception) { }
+                    runOnUiThread {
+                        if (err != null) Toast.makeText(this, err, Toast.LENGTH_LONG).show()
+                        reload()
+                    }
+                }.start()
+            }
+            else -> {
+                val b64 = Base64.encodeToString(payload, Base64.NO_WRAP)
+                val asFile = ch.asFile || b64.length > 150_000
+                if (!ch.asFile && asFile) {
+                    toast(tr("Too big for plain text, sending as a file", "برای متن بزرگ است، به صورت فایل فرستاده می‌شود"))
+                }
+                Thread {
+                    val f = if (asFile) Media.exportImage(this, c, payload, now) else null
+                    val st = Media.store(this, img)
+                    Messages.insert(this, Msg(0, c.id, st.first, true, now, true, false, 1, 2 or 4 or st.second))
+                    runOnUiThread {
+                        reload()
+                        if (f != null) Files.share(this, f) else SendFlow.shareText(this, "SHSO1|$now|S|$b64")
+                    }
+                }.start()
+            }
         }
     }
 
@@ -339,13 +404,11 @@ class ChatActivity : BaseActivity() {
     private fun exportMenu() {
         val labels = arrayOf(
             tr("Chat → raw file (encrypted)", "گفتگو ← فایل خام (رمزشده)"),
-            tr("Chat → readable text (NOT encrypted)", "گفتگو ← متن خوانا (بدون رمز)"),
-            tr("Typed message → file", "پیام نوشته‌شده ← فایل"))
+            tr("Chat → readable text (NOT encrypted)", "گفتگو ← متن خوانا (بدون رمز)"))
         Dialogs.choose(this, tr("Export", "خروجی"), labels, -1) { w ->
             when (w) {
                 0 -> doExport(false)
-                1 -> Dialogs.confirm(this, tr("This file will NOT be encrypted. Continue?", "این فایل رمزنگاری نیست. ادامه؟")) { doExport(true) }
-                else -> exportTyped()
+                else -> Dialogs.confirm(this, tr("This file will NOT be encrypted. Continue?", "این فایل رمزنگاری نیست. ادامه؟")) { doExport(true) }
             }
         }
     }
@@ -361,19 +424,6 @@ class ChatActivity : BaseActivity() {
                         (if (r.skipped > 0) "\n${r.skipped} " + tr("skipped (no key)", "رد شد (کلید نیست)") else ""))
             }
         }.start()
-    }
-
-    private fun exportTyped() {
-        val c = contact ?: return
-        val text = input.text.toString().trim()
-        if (text.isEmpty()) { toast(tr("type a message first", "اول پیام را بنویس")); return }
-        val payload = textPayload(c, text) ?: return
-        val now = System.currentTimeMillis()
-        val f = Files.exportMessage(this, c, payload, now)
-        Messages.insert(this, Msg(0, c.id, text, true, now, true, false, 1, 2))
-        input.setText("")
-        reload()
-        offerShare(f, tr("1 message exported as a file", "۱ پیام به صورت فایل خروجی گرفته شد"))
     }
 
     private fun offerShare(f: File, msg: String) {
