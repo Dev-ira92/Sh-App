@@ -12,7 +12,8 @@ import android.view.WindowManager
 /**
  * App-wide policy: theme load, FLAG_SECURE, and two separate timers after you leave the app:
  *  - auto-lock: the database locks (login screen again)
- *  - key clearing: friend/session keys are destroyed (when leaving / 10 min / 30 min / never)
+ *  - key clearing: session keys are destroyed (when leaving / 10 min / 30 min / never),
+ *    or kept inside the encrypted vault (and restored after login) if you chose that in Settings.
  */
 class ShadowApp : Application(), Application.ActivityLifecycleCallbacks {
     private var started = 0
@@ -26,6 +27,7 @@ class ShadowApp : Application(), Application.ActivityLifecycleCallbacks {
     override fun onCreate() {
         super.onCreate()
         Neo.load(this)
+        SessionVault.init(this)
         registerActivityLifecycleCallbacks(this)
     }
 
@@ -37,7 +39,7 @@ class ShadowApp : Application(), Application.ActivityLifecycleCallbacks {
         if (started == 0 && leftAt > 0) {
             val away = SystemClock.elapsedRealtime() - leftAt
             if (away > autoLockSec() * 1000L) SessionVault.lock()
-            val km = KeyPolicy.minutes(this)
+            val km = KeyPolicy.ramMinutes(this)
             if (km >= 0 && away > km * 60000L) SessionVault.wipeKeys()
         }
         started++
@@ -52,12 +54,13 @@ class ShadowApp : Application(), Application.ActivityLifecycleCallbacks {
             leftAt = SystemClock.elapsedRealtime()
             val s = autoLockSec()
             if (s <= 0) SessionVault.lock() else h.postDelayed(lockTask, s * 1000L)
-            val km = KeyPolicy.minutes(this)
+            val km = KeyPolicy.ramMinutes(this)
             if (km == 0) SessionVault.wipeKeys() else if (km > 0) h.postDelayed(keyTask, km * 60000L)
         }
     }
 
     override fun onActivityResumed(a: Activity) {
+        SessionVault.restoreIfNeeded(this)
         if (Lockdown.isOn(this)) {
             val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager
             am.appTasks.forEach { it.setExcludeFromRecents(true) }
