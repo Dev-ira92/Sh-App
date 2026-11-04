@@ -75,7 +75,7 @@ val THEMES: List<Palette> = listOf(
         red = h(0xFFD93025), mono = false, rain = false, dialog = R.style.Alert_Sms)
 )
 
-/** Theme + sizes (changeable in Settings) + small view factories. */
+/** Theme + sizes (changeable in Settings) + view factories with a soft "raised" look (gradients, shadows). */
 object Neo {
     var P: Palette = THEMES[0]
     var fs = 1.5f        // font scale
@@ -130,6 +130,40 @@ object Neo {
         cornerRadius = dp(c, r).toFloat()
     }
 
+    /** Dark-glass button background: light on top, darker at the bottom. */
+    fun glass(c: Context, r: Int = 12, stroke: Int = withAlpha(ACCENT, 200)): GradientDrawable {
+        val top = ColorUtils.blendARGB(P.recv, Color.WHITE, 0.14f)
+        val bot = ColorUtils.blendARGB(P.recv, Color.BLACK, 0.24f)
+        return GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(top, bot)).apply {
+            cornerRadius = dp(c, r).toFloat()
+            setStroke(dp(c, 1), stroke)
+        }
+    }
+
+    /** Accent-coloured raised button background. */
+    fun raised(c: Context, r: Int = 12): GradientDrawable {
+        val top = ColorUtils.blendARGB(ACCENT, Color.WHITE, 0.25f)
+        val bot = ColorUtils.blendARGB(ACCENT, Color.BLACK, 0.28f)
+        return GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(top, bot)).apply {
+            cornerRadius = dp(c, r).toFloat()
+            setStroke(dp(c, 1), withAlpha(Color.WHITE, 90))
+        }
+    }
+
+    /** A rounded panel with a soft shadow, for grouping controls. */
+    fun card(c: Context): LinearLayout = LinearLayout(c).apply {
+        orientation = LinearLayout.VERTICAL
+        val top = withAlpha(ColorUtils.blendARGB(P.recv, Color.WHITE, 0.07f), 238)
+        val bot = withAlpha(ColorUtils.blendARGB(P.recv, Color.BLACK, 0.22f), 238)
+        background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(top, bot)).apply {
+            cornerRadius = dp(c, 16).toFloat()
+            setStroke(dp(c, 1), withAlpha(DIM, 130))
+        }
+        elevation = dp(c, 3).toFloat()
+        val p = dp(c, 14)
+        setPadding(p, p, p, p)
+    }
+
     /** Chat bubble with a real tail and a soft gradient; Matrix gets a neon outline on the friend's side. */
     fun bubble(c: Context, sent: Boolean): Drawable {
         val base = if (sent) P.sent else P.recv
@@ -158,6 +192,7 @@ object Neo {
                 Color.HSVToColor(floatArrayOf((hue + 40f) % 360f, 0.70f, 0.70f)))
         }
         tv.background = g
+        tv.elevation = dp(c, 3).toFloat()
         return tv
     }
 
@@ -167,7 +202,7 @@ object Neo {
         setTextColor(P.recvText)
         typeface = FONT
         textSize = 15 * fs
-        background = box(c, P.recv, DIM, 8)
+        background = box(c, P.recv, DIM, 10)
         val p = dp(c, 10)
         setPadding(p, p, p, p)
         textDirection = View.TEXT_DIRECTION_FIRST_STRONG
@@ -180,8 +215,19 @@ object Neo {
         isAllCaps = false
         textSize = 14 * fs
         setTextColor(ACCENT)
-        typeface = FONT
-        background = box(c, 0, ACCENT, 8)
+        typeface = BOLD
+        background = glass(c)
+        elevation = dp(c, 4).toFloat()
+    }
+
+    fun primary(c: Context, label: String): Button = button(c, label).apply {
+        setTextColor(P.onAccent)
+        background = raised(c)
+    }
+
+    fun danger(c: Context, label: String): Button = button(c, label).apply {
+        setTextColor(RED)
+        background = glass(c, 12, RED)
     }
 
     fun vertical(c: Context): LinearLayout = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
@@ -280,7 +326,7 @@ class BubbleDrawable(
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }
 
-/** A line icon drawn from a tiny path (24x24 grid), tinted; "duo" icons also get a soft fill. */
+/** A line icon drawn from a tiny path (24x24 grid) with a soft drop shadow; "duo" icons also get a fill. */
 class IconDrawable(private val path: Path, tint: Int, private val px: Int, duo: Boolean) : Drawable() {
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -289,6 +335,7 @@ class IconDrawable(private val path: Path, tint: Int, private val px: Int, duo: 
         strokeJoin = Paint.Join.ROUND
         color = tint
     }
+    private val shadow = Paint(stroke).apply { color = 0x66000000 }
     private val fillP: Paint? = if (duo) Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
         color = Neo.withAlpha(tint, 70)
@@ -300,6 +347,10 @@ class IconDrawable(private val path: Path, tint: Int, private val px: Int, duo: 
         canvas.save()
         canvas.translate(b.left.toFloat(), b.top.toFloat())
         canvas.scale(s, s)
+        canvas.save()
+        canvas.translate(0.9f, 1.2f)
+        canvas.drawPath(path, shadow)
+        canvas.restore()
         fillP?.let { canvas.drawPath(path, it) }
         canvas.drawPath(path, stroke)
         canvas.restore()
@@ -336,10 +387,17 @@ object Icons {
         "clock" to "O12 12 9 M12 7 V12 L15.5 14",
         "cross" to "M6 6 L18 18 M18 6 L6 18",
         "file" to "M6 3 H14 L19 8 V21 H6 Z M14 3 V8 H19 M9 13 H16 M9 17 H16",
-        "eye" to "M2 12 Q12 3 22 12 Q12 21 2 12 Z O12 12 3"
+        "eye" to "M2 12 Q12 3 22 12 Q12 21 2 12 Z O12 12 3",
+        "menu" to "M4 6 H20 M4 12 H20 M4 18 H20",
+        "trash" to "M5 7 H19 M9 7 V4 H15 V7 M7 7 L8 20 H16 L17 7 M10 11 V16 M14 11 V16",
+        "globe" to "O12 12 9 M3 12 H21 M12 3 Q7 12 12 21 M12 3 Q17 12 12 21",
+        "server" to "M4 4 H20 V10 H4 Z M4 14 H20 V20 H4 Z M7 7 H7.5 M7 17 H7.5",
+        "image" to "M4 5 H20 V19 H4 Z M4 16 L9 11 L13 15 L16 12 L20 16 O15 9 1.5",
+        "phone" to "M8 3 H16 V21 H8 Z M11 18 H13",
+        "copy" to "M8 8 H19 V20 H8 Z M5 16 V4 H15"
     )
 
-    private val DUO = setOf("send", "shield", "alert", "key", "file", "share", "eye", "qr")
+    private val DUO = setOf("send", "shield", "alert", "key", "file", "share", "eye", "qr", "trash", "server", "image", "globe")
 
     private fun parse(d: String): Path {
         val p = Path()
