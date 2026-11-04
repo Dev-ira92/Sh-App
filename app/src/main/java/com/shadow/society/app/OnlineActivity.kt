@@ -1,31 +1,31 @@
 package com.shadow.society.app
 
-import android.content.Intent
 import android.os.Bundle
+import android.text.InputType
 import android.view.Gravity
-import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 
-/** Internal server (Cloudflare Worker): server, my inbox, my address, invite for a shared server. */
+/** Online: my phone number (= my ID) and the server (my own, or my friend's / a shared one). */
 class OnlineActivity : OnlineBase() {
     private lateinit var status: TextView
-    private lateinit var qr: ImageView
-    private lateinit var addrBox: LinearLayout
 
     private fun toast(s: String) { Toast.makeText(this, s, Toast.LENGTH_LONG).show() }
 
-    private fun btn(col: LinearLayout, label: String, top: Int, f: () -> Unit): Button {
-        val b = Neo.button(this, label)
-        Neo.add(col, b, top)
+    private fun btn(parent: LinearLayout, label: String, top: Int, primary: Boolean = false, f: () -> Unit): Button {
+        val b = if (primary) Neo.primary(this, label) else Neo.button(this, label)
+        Neo.add(parent, b, top)
         b.setOnClickListener { f() }
         return b
+    }
+
+    private fun title(card: LinearLayout, s: String) {
+        card.addView(Neo.text(this, s, 15, Neo.TEXT).apply { typeface = Neo.BOLD })
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -37,66 +37,65 @@ class OnlineActivity : OnlineBase() {
         bar.orientation = LinearLayout.HORIZONTAL
         bar.gravity = Gravity.CENTER_VERTICAL
         bar.setBackgroundColor(Neo.PANEL)
+        bar.elevation = Neo.dp(this, 6).toFloat()
         val bp = Neo.dp(this, 4)
         bar.setPadding(bp, bp, bp, bp)
         bar.addView(Icons.button(this, "back", Neo.BARTEXT) { finish() })
-        val title = Neo.glow(Neo.text(this, tr("Online (internal server)", "آنلاین (سرور داخلی)"), 18, Neo.BARTEXT))
-        title.typeface = Neo.BOLD
-        bar.addView(title)
+        val ttl = Neo.glow(Neo.text(this, tr("Online", "آنلاین"), 18, Neo.BARTEXT))
+        ttl.typeface = Neo.BOLD
+        bar.addView(ttl)
         outer.addView(bar)
 
         val sv = ScrollView(this)
         val col = Neo.vertical(this)
-        val p = Neo.dp(this, 16)
-        col.setPadding(p, p / 2, p, p * 2)
+        val p = Neo.dp(this, 14)
+        col.setPadding(p, p, p, p * 2)
         sv.addView(col)
         outer.addView(sv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
         col.addView(Neo.text(this, tr(
-            "The internal server is a free Cloudflare Worker that only holds encrypted packets. Shared server: one person deploys it, the other joins with an invite. Separate servers: each person deploys their own and you only exchange addresses.",
-            "سرور داخلی یک Worker رایگان در Cloudflare است که فقط بسته‌های رمزشده را نگه می‌دارد. سرور مشترک: یک نفر می‌سازد و نفر دوم با دعوت‌نامه می‌پیوندد. سرور جدا: هر کس سرور خودش را می‌سازد و فقط آدرس‌ها را به هم می‌دهید."), 12, Neo.DIM))
+            "Messages go straight to your friend's phone number. Both of you register your number on the same server (shared), or each person has their own server and you save your friend's server address in his contact.",
+            "پیام‌ها مستقیم به شماره‌ی موبایل دوستت می‌روند. یا هر دو روی یک سرور ثبت می‌شوید (مشترک)، یا هر کس سرور خودش را دارد و آدرس سرور دوستت را در مخاطبش ذخیره می‌کنی."), 12, Neo.DIM))
+
         status = Neo.text(this, "", 13, Neo.TEXT)
-        Neo.add(col, status, 12)
+        Neo.add(col, status, 10)
 
-        col.addView(Neo.section(this, tr("STEP 1 · SERVER", "گام ۱ · سرور")))
-        btn(col, tr("Use my own server…", "سرور خودم…"), 4) { ownServer() }
-        btn(col, tr("Join a shared server (invite)…", "پیوستن به سرور مشترک (دعوت‌نامه)…"), 8) { joinServer() }
-        btn(col, tr("Test connection", "تست اتصال"), 8) { testServer() }
+        val c1 = Neo.card(this)
+        title(c1, "1 · " + tr("My phone number", "شماره‌ی موبایل من"))
+        c1.addView(Neo.text(this, tr("This is your online ID. Your friend saves you with this same number.",
+            "این شناسه‌ی آنلاین توست. دوستت هم تو را با همین شماره ذخیره می‌کند."), 12, Neo.DIM))
+        btn(c1, tr("Set my number…", "تنظیم شماره‌ی من…"), 10, true) { setPhone() }
+        Neo.add(col, c1, 14)
 
-        col.addView(Neo.section(this, tr("STEP 2 · MY INBOX", "گام ۲ · صندوق من")))
-        btn(col, tr("Create my inbox", "ساخت صندوق من"), 4) { createInbox() }
+        val c2 = Neo.card(this)
+        title(c2, "2 · " + tr("Server", "سرور"))
+        c2.addView(Neo.text(this, tr("Your own server: you deploy it on Cloudflare. A friend's / shared server: import the address he gave you.",
+            "سرور خودم: خودت روی Cloudflare می‌سازی. سرور دوستم / مشترک: آدرسی که به تو داده را وارد کن."), 12, Neo.DIM))
+        btn(c2, tr("My own server…", "سرور خودم…"), 10, true) { ownServer() }
+        btn(c2, tr("Use a friend's / shared server…", "سرور دوستم / مشترک…"), 8) { joinServer() }
+        btn(c2, tr("Test connection", "تست اتصال"), 8) { testServer() }
+        Neo.add(col, c2, 14)
 
-        addrBox = Neo.vertical(this)
-        addrBox.addView(Neo.section(this, tr("MY ONLINE ADDRESS (give it to your contact)", "آدرس آنلاین من (به مخاطبت بده)")))
-        addrBox.addView(Neo.text(this, tr("With this address your contact can drop messages into your inbox. They cannot read them.",
-            "با این آدرس مخاطبت می‌تواند برایت پیام بگذارد. نمی‌تواند چیزی بخواند."), 12, Neo.DIM))
-        qr = ImageView(this)
-        Neo.add(addrBox, qr, 10)
-        btn(addrBox, tr("Copy", "کپی"), 10) { Online.myAddr(this)?.let { Neo.copy(this, it.toLine()) } }
-        btn(addrBox, tr("Send as text…", "ارسال به صورت متن…"), 8) { shareAddr(0) }
-        btn(addrBox, tr("Send as TXT file…", "ارسال به صورت فایل TXT…"), 8) { shareAddr(1) }
-        btn(addrBox, tr("Send as JSON file…", "ارسال به صورت فایل JSON…"), 8) { shareAddr(2) }
-        btn(addrBox, tr("Send as QR image…", "ارسال به صورت تصویر QR…"), 8) { shareAddr(3) }
-        col.addView(addrBox)
+        val c3 = Neo.card(this)
+        title(c3, "3 · " + tr("Share my server address", "ارسال آدرس سرور من"))
+        c3.addView(Neo.text(this, tr("Contains the SERVER KEY: give it only to people who may chat on your server.",
+            "«کلید سرور» داخلش است: فقط به کسانی بده که اجازه‌ی چت روی سرورت را دارند."), 12, Neo.DIM))
+        btn(c3, tr("As text…", "به صورت متن…"), 10) { share(0) }
+        btn(c3, tr("As TXT file…", "به صورت فایل TXT…"), 8) { share(1) }
+        btn(c3, tr("As JSON file…", "به صورت فایل JSON…"), 8) { share(2) }
+        btn(c3, tr("As QR image…", "به صورت تصویر QR…"), 8) { share(3) }
+        Neo.add(col, c3, 14)
 
-        col.addView(Neo.section(this, tr("INVITE (shared server)", "دعوت‌نامه (سرور مشترک)")))
-        col.addView(Neo.text(this, tr("Contains the SERVER KEY: whoever has it can create inboxes on your server. Give it only to your contact.",
-            "«کلید سرور» داخلش است: هر کس دارد می‌تواند روی سرور تو صندوق بسازد. فقط به مخاطبت بده."), 12, Neo.DIM))
-        btn(col, tr("Send invite as text…", "ارسال دعوت‌نامه به صورت متن…"), 8) { shareInvite(0) }
-        btn(col, tr("Send invite as TXT…", "ارسال دعوت‌نامه به صورت TXT…"), 8) { shareInvite(1) }
-        btn(col, tr("Send invite as JSON…", "ارسال دعوت‌نامه به صورت JSON…"), 8) { shareInvite(2) }
-        btn(col, tr("Send invite as QR image…", "ارسال دعوت‌نامه به صورت تصویر QR…"), 8) { shareInvite(3) }
-
-        col.addView(Neo.section(this, tr("RESET", "پاک‌سازی")))
-        val reset = btn(col, tr("Forget the server and my inbox", "فراموش کردن سرور و صندوق من"), 4) {
-            Dialogs.confirm(this, tr("Forget the server and your inbox? Contacts' addresses are kept.",
-                "سرور و صندوقت فراموش شود؟ آدرس مخاطب‌ها می‌ماند.")) {
-                Online.reset(this)
+        val c4 = Neo.card(this)
+        val forget = Neo.danger(this, tr("Forget the server", "فراموش کردن سرور"))
+        Neo.add(c4, forget, 0)
+        forget.setOnClickListener {
+            Dialogs.confirm(this, tr("Forget the server? Your number stays.", "سرور فراموش شود؟ شماره‌ات می‌ماند.")) {
+                Online.forgetServer(this)
                 refresh()
             }
         }
-        reset.setTextColor(Neo.RED)
-        reset.background = Neo.box(this, 0, Neo.RED, 8)
+        Neo.add(col, c4, 14)
 
         setContentView(Neo.backdrop(this, outer))
     }
@@ -104,25 +103,58 @@ class OnlineActivity : OnlineBase() {
     override fun onReady() { refresh() }
 
     private fun refresh() {
-        val url = Online.meta(this, "ol_url")
-        val mine = Online.mine(this)
-        status.text = tr("Server: ", "سرور: ") + (if (url != null) Online.host(url) else tr("not set", "تنظیم نشده")) + "\n" +
-                tr("My inbox: ", "صندوق من: ") + (if (mine != null) tr("ready", "آماده") else tr("not created", "ساخته نشده"))
-        addrBox.visibility = if (mine != null) View.VISIBLE else View.GONE
-        if (mine != null) {
-            qr.setImageBitmap(QrTools.render(Addr(mine.url, mine.inbox, mine.drop).toLine(), Neo.dp(this, 260), true))
+        val ph = Online.myPhone(this)
+        val s = Online.myServer(this)
+        status.text = tr("Number: ", "شماره: ") + (ph ?: tr("not set", "تنظیم نشده")) + "\n" +
+                tr("Server: ", "سرور: ") + (if (s != null) Online.host(s.u) else tr("not set", "تنظیم نشده")) + "\n" +
+                tr("Status: ", "وضعیت: ") + (if (Online.ready(this)) tr("ready ✓", "آماده ✓") else tr("not ready", "آماده نیست"))
+    }
+
+    private fun registerNow() {
+        if (Online.myInbox(this) == null || Online.myServer(this) == null) { refresh(); return }
+        toast(tr("Registering…", "در حال ثبت…"))
+        Thread {
+            val err = Online.register(this)
+            runOnUiThread {
+                toast(err ?: tr("Online is ready ✓", "آنلاین آماده شد ✓"))
+                refresh()
+            }
+        }.start()
+    }
+
+    private fun setPhone() {
+        val col = Neo.vertical(this)
+        val p = Neo.dp(this, 20)
+        col.setPadding(p, p / 2, p, 0)
+        val cur = Online.myPhone(this) ?: ""
+        val e = Neo.input(this, tr("my phone number", "شماره‌ی موبایل من")).apply {
+            inputType = InputType.TYPE_CLASS_PHONE
+            setText(cur)
+        }
+        Neo.add(col, e)
+        val d = Neo.dialog(this).setTitle(tr("My number", "شماره‌ی من")).setView(col)
+            .setPositiveButton(tr("Save", "ذخیره"), null)
+            .setNegativeButton(tr("Cancel", "انصراف"), null).create()
+        d.show()
+        d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val s = e.text.toString().trim()
+            if (Phones.tail(s).length < 6) {
+                toast(tr("Enter a valid number", "یک شماره‌ی معتبر وارد کن"))
+            } else {
+                d.dismiss()
+                Online.setMyPhone(this, s)
+                registerNow()
+            }
         }
     }
 
-    // ---------- step 1 ----------
     private fun ownServer() {
         val col = Neo.vertical(this)
         val p = Neo.dp(this, 20)
         col.setPadding(p, p / 2, p, 0)
-        val cur = Online.meta(this, "ol_url") ?: ""
-        val curKey = Online.meta(this, "ol_skey") ?: ""
-        val u = Neo.input(this, "https://sh-so.xxx.workers.dev").apply { setText(cur) }
-        val k = Neo.input(this, tr("server key (SERVER_KEY)", "کلید سرور (SERVER_KEY)")).apply { setText(curKey) }
+        val cur = Online.myServer(this)
+        val u = Neo.input(this, "https://sh-so.xxx.workers.dev").apply { setText(cur?.u ?: "") }
+        val k = Neo.input(this, tr("server key (SERVER_KEY)", "کلید سرور (SERVER_KEY)")).apply { setText(cur?.k ?: "") }
         Neo.add(col, u)
         Neo.add(col, k, 8)
         val d = Neo.dialog(this).setTitle(tr("My own server", "سرور خودم")).setView(col)
@@ -138,86 +170,51 @@ class OnlineActivity : OnlineBase() {
                 toast(tr("Server key: at least 8 characters, no spaces or |", "کلید سرور: حداقل ۸ کاراکتر، بدون فاصله و |"))
             } else {
                 d.dismiss()
-                Online.saveServer(this, url, key)
-                refresh()
-                createInbox()
+                Online.saveServer(this, ServerInfo(url, key))
+                registerNow()
             }
         }
     }
 
     private fun joinServer() {
-        importRaw(tr("Server invite", "دعوت‌نامه‌ی سرور")) { raw ->
+        importRaw(tr("Server address", "آدرس سرور")) { raw ->
             val s = OnlineParse.server(raw)
             if (s == null) {
-                toast(tr("This is not a server invite", "این دعوت‌نامه‌ی سرور نیست"))
+                toast(tr("This is not a server address", "این آدرس سرور نیست"))
             } else {
-                Online.saveServer(this, s.u, s.k)
-                refresh()
-                createInbox()
+                Online.saveServer(this, s)
+                registerNow()
             }
         }
     }
 
     private fun testServer() {
-        val u = Online.meta(this, "ol_url")
-        if (u == null) { toast(tr("Set the server first", "اول سرور را تنظیم کن")); return }
+        val s = Online.myServer(this)
+        if (s == null) { toast(tr("Set the server first", "اول سرور را تنظیم کن")); return }
         toast(tr("Testing…", "در حال تست…"))
         Thread {
-            val r = Net.request("GET", "$u/ping", emptyMap(), null)
+            val r = Net.request("GET", s.u + "/ping", emptyMap(), null)
             runOnUiThread {
                 if (r.code == 200 && r.body.contains("sh-so")) toast(tr("Connected ✓", "اتصال برقرار است ✓")) else toast(Online.err(r))
             }
         }.start()
     }
 
-    // ---------- step 2 ----------
-    private fun createInbox() {
-        if (Online.meta(this, "ol_url") == null) { toast(tr("Set the server first", "اول سرور را تنظیم کن")); return }
-        val go = {
-            toast(tr("Creating your inbox…", "در حال ساخت صندوق…"))
-            Thread {
-                val err = Online.createInbox(this)
-                runOnUiThread {
-                    toast(err ?: tr("My inbox is ready", "صندوق من آماده شد"))
-                    refresh()
+    private fun share(kind: Int) {
+        val s = Online.myServer(this)
+        if (s == null) { toast(tr("Set the server first", "اول سرور را تنظیم کن")); return }
+        Dialogs.confirm(this, tr("This contains the SERVER KEY. Send it only to people who may chat on your server. Continue?",
+            "این «کلید سرور» را دارد. فقط به کسانی بفرست که اجازه‌ی چت روی سرورت را دارند. ادامه؟")) {
+            when (kind) {
+                0 -> SendFlow.shareText(this, s.toLine())
+                1 -> Files.share(this, Online.exportText(this, "ShSo-server.txt", "# Sh-So\n" + s.toLine() + "\n"), "text/plain")
+                2 -> Files.share(this, Online.exportText(this, "ShSo-server.json", s.toJson()), "application/json")
+                else -> {
+                    val f = Files.exportKeyPng(this, s.toLine())
+                    if (f == null) toast(tr("Could not create the image", "ساخت تصویر ناموفق بود"))
+                    else Files.share(this, f, "image/png")
                 }
-            }.start()
-        }
-        if (Online.mine(this) != null) {
-            Dialogs.confirm(this, tr("A new inbox changes your address; give it to your contacts again. Continue?",
-                "صندوق جدید آدرست را عوض می‌کند؛ باید دوباره به مخاطب‌ها بدهی. ادامه؟")) { go() }
-        } else {
-            go()
-        }
-    }
-
-    // ---------- sharing ----------
-    private fun shareValue(line: String, json: String, base: String, kind: Int) {
-        when (kind) {
-            0 -> SendFlow.shareText(this, line)
-            1 -> Files.share(this, Online.exportText(this, "$base.txt", "# Sh-So\n$line\n"), "text/plain")
-            2 -> Files.share(this, Online.exportText(this, "$base.json", json), "application/json")
-            else -> {
-                val f = Files.exportKeyPng(this, line)
-                if (f == null) toast(tr("Could not create the image", "ساخت تصویر ناموفق بود"))
-                else Files.share(this, f, "image/png")
             }
-        }
-    }
-
-    private fun shareAddr(kind: Int) {
-        val a = Online.myAddr(this) ?: return
-        shareValue(a.toLine(), a.toJson(), "ShSo-address", kind)
-    }
-
-    private fun shareInvite(kind: Int) {
-        val u = Online.meta(this, "ol_url")
-        val k = Online.meta(this, "ol_skey")
-        if (u == null || k == null) { toast(tr("Set the server first", "اول سرور را تنظیم کن")); return }
-        Dialogs.confirm(this, tr("This invite contains the SERVER KEY. Send it only to your contact. Continue?",
-            "این دعوت‌نامه «کلید سرور» را دارد. فقط به مخاطبت بفرست. ادامه؟")) {
-            val s = ServerInfo(u, k)
-            shareValue(s.toLine(), s.toJson(), "ShSo-invite", kind)
         }
     }
 }
