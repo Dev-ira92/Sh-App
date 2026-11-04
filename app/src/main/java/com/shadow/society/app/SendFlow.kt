@@ -56,7 +56,7 @@ object SmsPerm {
     }
 }
 
-/** A screen that can import raw text (QR scan, file / QR picture, paste), used for keys' addresses and invites. */
+/** A screen that can import raw text (QR scan, file / QR picture, paste): server addresses, invites. */
 abstract class OnlineBase : BaseActivity() {
     private var rawCb: ((String) -> Unit)? = null
 
@@ -91,7 +91,7 @@ abstract class OnlineBase : BaseActivity() {
         val col = Neo.vertical(this)
         val p = Neo.dp(this, 20)
         col.setPadding(p, p / 2, p, 0)
-        val e = Neo.input(this, "SHSOADDR1|…  /  SHSOSRV1|…  /  { … }").apply {
+        val e = Neo.input(this, "SHSOSRV1|https://…|…").apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             minLines = 4
             gravity = Gravity.TOP
@@ -108,14 +108,28 @@ abstract class OnlineBase : BaseActivity() {
 
 /** The questions asked every time you press send. */
 object SendFlow {
-    /** kind: 0 = SMS (subId = SIM), 1 = internal server, 2 = other app (asFile = txt file, else text). */
-    class Choice(val kind: Int, val subId: Int = -1, val asFile: Boolean = false)
+    /** kind: 0 = SMS (subId = SIM), 1 = internal server, 2 = other app (format: 0 text, 1 .txt file, 2 .json file). */
+    class Choice(val kind: Int, val subId: Int = -1, val format: Int = 0)
 
     fun ask(a: BaseActivity, c: Contact, cb: (Choice) -> Unit) {
-        val labels = arrayOf(tr("📶 SMS (offline)", "📶 پیامک (آفلاین)"), tr("🌐 Online", "🌐 آنلاین"))
+        val labels = arrayOf("📶 " + tr("SMS", "پیامک"), "🌐 " + tr("Online", "آنلاین"))
         Dialogs.choose(a, tr("Send through", "ارسال از طریق"), labels, -1) { w ->
-            if (w == 0) pickSim(a, c) { sub -> cb(Choice(0, sub)) } else askFormat(a, cb)
+            if (w == 0) pickSim(a, c) { sub -> cb(Choice(0, sub)) } else askOnline(a, c, cb)
         }
+    }
+
+    private fun askOnline(a: BaseActivity, c: Contact, cb: (Choice) -> Unit) {
+        val labels = arrayOf(
+            "🏠 " + tr("Internal server (straight to ${c.phone})", "سرور داخلی (مستقیم به ${c.phone})"),
+            "📤 " + tr("Other app (Telegram, …)", "برنامه‌ی دیگر (تلگرام، …)"))
+        Dialogs.choose(a, tr("Online", "آنلاین"), labels, -1) { w ->
+            if (w == 0) cb(Choice(1)) else askFormat(a, cb)
+        }
+    }
+
+    private fun askFormat(a: BaseActivity, cb: (Choice) -> Unit) {
+        val labels = arrayOf("📝 " + tr("Text", "متن"), "📄 " + tr(".txt file", "فایل txt"), "🧾 " + tr(".json file", "فایل json"))
+        Dialogs.choose(a, tr("Send as", "ارسال به صورت"), labels, -1) { f -> cb(Choice(2, format = f)) }
     }
 
     private fun pickSim(a: BaseActivity, c: Contact, cb: (Int) -> Unit) {
@@ -133,18 +147,6 @@ object SendFlow {
         }
         Dialogs.choose(a, tr("Send with which SIM?", "با کدام سیم‌کارت؟"),
             Array(sims.size) { sims[it].label }, -1) { w -> cb(sims[w].subId) }
-    }
-
-    private fun askFormat(a: BaseActivity, cb: (Choice) -> Unit) {
-        val labels = arrayOf(tr("📝 Text", "📝 متن"), tr("📄 File (.txt)", "📄 فایل (.txt)"))
-        Dialogs.choose(a, tr("Send as", "ارسال به صورت"), labels, -1) { f -> askDest(a, f == 1, cb) }
-    }
-
-    private fun askDest(a: BaseActivity, file: Boolean, cb: (Choice) -> Unit) {
-        val labels = arrayOf(tr("🏠 Internal server", "🏠 سرور داخلی"), tr("📤 Other app (Telegram, …)", "📤 برنامه‌ی دیگر (تلگرام، …)"))
-        Dialogs.choose(a, tr("Deliver with", "تحویل با"), labels, -1) { d ->
-            cb(if (d == 0) Choice(1, asFile = file) else Choice(2, asFile = file))
-        }
     }
 
     fun shareText(a: Activity, s: String) {
