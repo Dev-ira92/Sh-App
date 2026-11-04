@@ -11,12 +11,13 @@ import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.Toast
 
-class ChatListActivity : BaseActivity() {
+class ChatListActivity : OnlineBase() {
     private lateinit var adapter: ContactAdapter
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (isFinishing) return
+        if (Pulse.hours(this) != 0) Pulse.set(this, 0)   // Dragon's Pulse is switched off
 
         val root = Neo.vertical(this)
         val p = Neo.dp(this, 12)
@@ -25,23 +26,20 @@ class ChatListActivity : BaseActivity() {
         bar.orientation = LinearLayout.HORIZONTAL
         bar.gravity = Gravity.CENTER_VERTICAL
         bar.setBackgroundColor(Neo.PANEL)
+        bar.elevation = Neo.dp(this, 6).toFloat()
         bar.setPadding(p, p / 3, p / 2, p / 3)
         val title = Neo.glow(Neo.text(this, "Sh-So", 22, Neo.BARTEXT))
         title.typeface = Neo.BOLD
         bar.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-
-        val net = Neo.text(this, "🌐", 16, Neo.BARTEXT)
-        net.setPadding(Neo.dp(this, 10), Neo.dp(this, 6), Neo.dp(this, 10), Neo.dp(this, 6))
-        net.setOnClickListener { startActivity(Intent(this, OnlineActivity::class.java)) }
-        bar.addView(net)
-
-        bar.addView(Icons.button(this, "key", Neo.BARTEXT) { startActivity(Intent(this, KeyActivity::class.java)) })
         bar.addView(Icons.button(this, "tune", Neo.BARTEXT) { startActivity(Intent(this, SettingsActivity::class.java)) })
-        val panicBtn = Icons.button(this, "alert", Neo.BARTEXT) {
-            Toast.makeText(this, tr("hold to destroy everything", "برای نابودی همه‌چیز نگه دارید"), Toast.LENGTH_SHORT).show()
+
+        // red trash = destroy all data (hold)
+        val wipe = Icons.button(this, "trash", Neo.RED) {
+            Toast.makeText(this, tr("hold to delete ALL data", "برای حذف همه‌ی داده‌ها نگه دارید"), Toast.LENGTH_SHORT).show()
         }
-        panicBtn.setOnLongClickListener { panic(); true }
-        bar.addView(panicBtn)
+        wipe.setOnLongClickListener { panic(); true }
+        bar.addView(wipe)
+
         bar.addView(Icons.button(this, "exit", Neo.BARTEXT) { SessionVault.lockAll(); finishAffinity() })
         root.addView(bar)
 
@@ -61,10 +59,8 @@ class ChatListActivity : BaseActivity() {
         lv.emptyView = empty
 
         val fab = Icons.button(this, "add", Neo.P.onAccent) { showAddContact(this, null) { reload() } }
-        val oval = GradientDrawable()
-        oval.shape = GradientDrawable.OVAL
-        oval.setColor(Neo.ACCENT)
-        fab.background = oval
+        fab.background = Neo.raised(this, 30).apply { shape = GradientDrawable.OVAL }
+        fab.elevation = Neo.dp(this, 8).toFloat()
         val q = Neo.dp(this, 16)
         fab.setPadding(q, q, q, q)
         val flp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -113,10 +109,17 @@ class ChatListActivity : BaseActivity() {
     private fun reload() {
         if (!SessionVault.isUnlocked()) return
         val l = Contacts.all(this)
+        // everything is encrypted by default: contacts auto-created from unknown senders become encrypted
+        for (c in l) {
+            if (c.level == 0 && c.name == c.phone) {
+                c.level = 1
+                Contacts.update(this, c)
+            }
+        }
         adapter.set(l, l.associate { it.id to Messages.unread(this, it.id) })
     }
 
-    /** Long-press the alert icon: keys, database, spool, settings — gone. */
+    /** Long-press the red trash: keys, database, spool, settings — gone. */
     private fun panic() {
         Duress.wipeAll(this)
         startActivity(Intent(this, MainActivity::class.java)
