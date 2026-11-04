@@ -51,7 +51,7 @@ object LockType {
     }
 }
 
-/** 3x3 pattern grid. Calls onDone with the dots (0..8) in the order they were touched. */
+/** 3x3 pattern grid with bright glowing dots. Calls onDone with the dots (0..8) in the order they were touched. */
 class PatternView(c: Context, private val onDone: (List<Int>) -> Unit) : View(c) {
     private val sel = ArrayList<Int>()
     private var fx = -1f
@@ -59,11 +59,11 @@ class PatternView(c: Context, private val onDone: (List<Int>) -> Unit) : View(c)
     private val dotP = Paint(Paint.ANTI_ALIAS_FLAG)
     private val lineP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = Neo.dp(c, 4).toFloat()
+        strokeWidth = Neo.dp(c, 5).toFloat()
         strokeCap = Paint.Cap.ROUND
         color = Neo.ACCENT
     }
-    private val rad: Float get() = minOf(width, height) / 3f * 0.14f
+    private val rad: Float get() = minOf(width, height) / 3f * 0.15f
 
     private fun px(i: Int): Float = width * ((i % 3) + 0.5f) / 3f
     private fun py(i: Int): Float = height * ((i / 3) + 0.5f) / 3f
@@ -118,17 +118,16 @@ class PatternView(c: Context, private val onDone: (List<Int>) -> Unit) : View(c)
         for (i in 0 until 9) {
             val on = sel.contains(i)
             if (on) {
-                dotP.color = Neo.ACCENT
-                dotP.alpha = 70
-                canvas.drawCircle(px(i), py(i), rad * 2.4f, dotP)
+                dotP.color = Neo.withAlpha(Neo.ACCENT, 80)
+                canvas.drawCircle(px(i), py(i), rad * 2.6f, dotP)
             }
-            dotP.color = if (on) Neo.ACCENT else Neo.DIM
-            canvas.drawCircle(px(i), py(i), if (on) rad * 1.2f else rad, dotP)
+            dotP.color = if (on) Neo.ACCENT else Neo.withAlpha(Neo.TEXT, 225)
+            canvas.drawCircle(px(i), py(i), if (on) rad * 1.25f else rad * 1.05f, dotP)
         }
     }
 }
 
-/** The input for a lock: password box, PIN keypad or pattern grid. Calls onSubmit with the secret. */
+/** The input for a lock: password box, PIN keypad (big bright digits) or pattern grid. */
 class SecretPad(private val ctx: Context, val type: String, private val label: String,
                 private val onSubmit: (String) -> Unit) {
     val view: LinearLayout = Neo.vertical(ctx)
@@ -154,7 +153,7 @@ class SecretPad(private val ctx: Context, val type: String, private val label: S
         e.imeOptions = EditorInfo.IME_ACTION_DONE or EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
         field = e
         Neo.add(view, e, 4)
-        val b = Neo.button(ctx, label)
+        val b = Neo.primary(ctx, label)
         Neo.add(view, b, 12)
         fun go() {
             val s = e.text.toString()
@@ -168,21 +167,22 @@ class SecretPad(private val ctx: Context, val type: String, private val label: S
     }
 
     private fun buildPin() {
-        val d = Neo.text(ctx, "–", 26, Neo.ACCENT)
+        val d = Neo.glow(Neo.text(ctx, "–", 30, Neo.TEXT))
         d.gravity = Gravity.CENTER
         dots = d
         Neo.add(view, d, 4)
         val keys = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0", "OK")
-        val m = Neo.dp(ctx, 3)
+        val m = Neo.dp(ctx, 4)
         for (r in 0 until 4) {
             val row = LinearLayout(ctx)
             row.orientation = LinearLayout.HORIZONTAL
             for (cI in 0 until 3) {
                 val k = keys[r * 3 + cI]
-                val b = Neo.button(ctx, k)
-                b.textSize = 16f * Neo.fs
+                val b = if (k == "OK") Neo.primary(ctx, k) else Neo.button(ctx, k)
+                b.textSize = 24f
+                b.setTextColor(if (k == "OK") Neo.P.onAccent else Neo.TEXT)   // bright digits
                 b.setOnClickListener { press(k) }
-                val lp = LinearLayout.LayoutParams(0, Neo.dp(ctx, 56), 1f)
+                val lp = LinearLayout.LayoutParams(0, Neo.dp(ctx, 60), 1f)
                 lp.setMargins(m, m, m, m)
                 row.addView(b, lp)
             }
