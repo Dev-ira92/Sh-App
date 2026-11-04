@@ -94,7 +94,7 @@ abstract class BaseActivity : AppCompatActivity() {
         scanCb = cb
         val o = ScanOptions()
         o.setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-        o.setPrompt(tr("Scan your friend's key QR", "QR کلید دوستت را اسکن کن"))
+        o.setPrompt(tr("Scan the QR code", "QR را اسکن کن"))
         o.setBeepEnabled(false)
         o.setOrientationLocked(false)
         scanLauncher.launch(o)
@@ -149,8 +149,11 @@ fun deriveAndStore(a: AppCompatActivity, id: Long, friend: String, verbal: Strin
     }.start()
 }
 
-/** New / edit contact. Fire level (default) asks for friend key, verbal code and mixing method. */
-fun showAddContact(a: BaseActivity, ex: Contact?, done: () -> Unit) {
+/**
+ * New / edit contact. The phone number is also the online ID. Encrypted by default: asks for the friend's key,
+ * verbal code and mixing method. Optional: your friend's server address (for dedicated servers).
+ */
+fun showAddContact(a: OnlineBase, ex: Contact?, done: () -> Unit) {
     val sv = ScrollView(a)
     val col = Neo.vertical(a)
     val p = Neo.dp(a, 20)
@@ -158,14 +161,15 @@ fun showAddContact(a: BaseActivity, ex: Contact?, done: () -> Unit) {
     sv.addView(col)
 
     val name = Neo.input(a, tr("name", "نام"))
-    val phone = Neo.input(a, tr("phone number", "شماره تلفن")).apply { inputType = InputType.TYPE_CLASS_PHONE }
+    val phone = Neo.input(a, tr("phone number (also the online ID)", "شماره‌ی موبایل (شناسه‌ی آنلاین هم همین است)"))
+        .apply { inputType = InputType.TYPE_CLASS_PHONE }
     val fire = Switch(a).apply {
-        text = tr("🔴 Fire level (AES with your keys)", "🔴 سطح آتش (رمزنگاری AES با کلیدهای شما)")
-        setTextColor(Neo.P.recvText)
+        text = tr("🔐 Encrypted (recommended)", "🔐 رمزنگاری‌شده (پیشنهادی)")
+        setTextColor(Neo.TEXT)
         isChecked = true
     }
-    val plainNote = Neo.text(a, tr("Plain text over SMS — anyone can read it.",
-        "متن ساده روی پیامک — هر کسی می‌تواند بخواند."), 12, Neo.RED)
+    val plainNote = Neo.text(a, tr("Plain text: anyone on the way can read it.",
+        "متن ساده: هر کسی در مسیر می‌تواند بخواند."), 12, Neo.RED)
 
     val friend = Neo.input(a, tr("friend's key", "کلید دوستم")).apply {
         inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
@@ -197,11 +201,29 @@ fun showAddContact(a: BaseActivity, ex: Contact?, done: () -> Unit) {
             "برای نگه‌داشتن کلید جلسه‌ی فعلی خالی بگذارید."), 11, Neo.DIM), 6)
     }
 
+    // friend's server address (optional)
+    val curSrv = if (ex != null) Online.contactServer(a, ex.id) else null
+    val srv = Neo.input(a, if (curSrv != null) tr("current: ", "فعلی: ") + Online.host(curSrv.u)
+                           else tr("friend's server address (optional)", "آدرس سرور دوستم (اختیاری)"))
+    val srow = LinearLayout(a).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+    }
+    srow.addView(srv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+    srow.addView(Icons.button(a, "download", Neo.ACCENT) {
+        a.importRaw(tr("Friend's server address", "آدرس سرور دوستم")) { raw ->
+            val s = OnlineParse.server(raw)
+            srv.setText(s?.toLine() ?: raw)
+        }
+    })
+
     Neo.add(col, name)
     Neo.add(col, phone, 8)
     Neo.add(col, fire, 14)
     Neo.add(col, plainNote, 6)
     Neo.add(col, fireBox, 6)
+    Neo.add(col, Neo.text(a, tr("Online: leave empty to use my server.", "آنلاین: خالی بگذار تا از سرور من استفاده شود."), 11, Neo.DIM), 14)
+    Neo.add(col, srow, 4)
 
     fun refresh() {
         mBtn.text = "⚙ " + method.label()
@@ -237,11 +259,17 @@ fun showAddContact(a: BaseActivity, ex: Contact?, done: () -> Unit) {
         val vb = verbal.text.toString().trim()
         val fm = formula.text.toString()
         val mt = method
+        val st = srv.text.toString().trim()
+        val srvInfo = if (st.isEmpty()) null else OnlineParse.server(st)
         val hasKeys = isFire && f.isNotEmpty() && vb.isNotEmpty()
 
         if (n.isEmpty() || ph.isEmpty()) { t(tr("name and number required", "نام و شماره لازم است")); return@setOnClickListener }
+        if (st.isNotEmpty() && srvInfo == null) {
+            t(tr("This is not a server address", "این آدرس سرور نیست"))
+            return@setOnClickListener
+        }
         if (isFire && ex == null && !hasKeys) {
-            t(tr("Fire needs friend's key + verbal code", "سطح آتش کلید دوستم و کد شفاهی لازم دارد"))
+            t(tr("Encrypted contacts need the friend's key + verbal code", "مخاطب رمزنگاری‌شده کلید دوستم و کد شفاهی لازم دارد"))
             return@setOnClickListener
         }
         if (hasKeys) {
@@ -260,6 +288,7 @@ fun showAddContact(a: BaseActivity, ex: Contact?, done: () -> Unit) {
             ok = Contacts.update(a, Contact(ex.id, n, ph, level, ex.createdAt))
         }
         if (!ok) { t(tr("number already exists", "این شماره قبلاً ثبت شده")); return@setOnClickListener }
+        if (srvInfo != null) Online.setContactServer(a, id, srvInfo)
 
         if (!hasKeys) { d.dismiss(); done(); return@setOnClickListener }
 
