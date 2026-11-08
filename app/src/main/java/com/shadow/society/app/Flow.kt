@@ -23,10 +23,7 @@ import androidx.fragment.app.FragmentActivity
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 
-/**
- * App lock: fingerprint / face / pattern / PIN / password of the PHONE, asked before the login screen.
- * It is only a first door. The vault passphrase is still required (it derives the database key).
- */
+/** Fingerprint / face / phone lock, asked by the phone itself. */
 object AppLock {
     private fun pick(c: Context): Int? {
         val bm = BiometricManager.from(c)
@@ -49,7 +46,7 @@ object AppLock {
 
     fun prompt(a: FragmentActivity, onOk: () -> Unit, onFail: (String) -> Unit) {
         val auth = pick(a)
-        if (auth == null) { onOk(); return }
+        if (auth == null) { onFail(tr("No screen lock / fingerprint on this phone", "این گوشی قفل صفحه یا اثر انگشت ندارد")); return }
         val cb = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                 lastOk = SystemClock.elapsedRealtime()
@@ -60,7 +57,7 @@ object AppLock {
             }
         }
         val b = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Sh-So")
+            .setTitle("Shadow")
             .setSubtitle(tr("Verify it's you", "هویت خود را تأیید کنید"))
             .setAllowedAuthenticators(auth)
         if ((auth and Authenticators.DEVICE_CREDENTIAL) == 0) b.setNegativeButtonText(tr("Cancel", "انصراف"))
@@ -68,7 +65,7 @@ object AppLock {
     }
 }
 
-/** Every screen after login extends this: locked vault => login; theme change => rebuild; QR / file key helpers. */
+/** Every screen after login extends this: locked vault => login; theme change => rebuild; QR / file helpers. */
 abstract class BaseActivity : AppCompatActivity() {
     private var built = -1
     private var scanCb: ((String) -> Unit)? = null
@@ -117,8 +114,8 @@ abstract class BaseActivity : AppCompatActivity() {
         super.onResume()
         if (isFinishing) return
         if (built != Neo.version) { recreate(); return }
-        SessionVault.checkPulse()
         if (!SessionVault.isUnlocked()) { toLogin(); return }
+        SessionVault.checkPulse()
         onReady()
     }
 
@@ -131,27 +128,42 @@ abstract class BaseActivity : AppCompatActivity() {
     }
 }
 
-/** Builds the AES session key (in RAM only) from my key + friend key + verbal code + method. */
-fun deriveAndStore(a: AppCompatActivity, id: Long, friend: String, verbal: String, method: MixMethod,
-                   formula: String, cb: (String?, String?) -> Unit) {
+private val HEX64 = Regex("[0-9a-fA-F]{64}")
+private val HEX32 = Regex("[0-9a-f]{32}")
+
+/**
+ * Builds the session key from my key + the friend's key + the shared passphrase + the shared salt
+ * (Argon2id + HKDF, takes a few seconds) and stores it. The keys are never sent anywhere.
+ */
+fun deriveAndStore(a: AppCompatActivity, id: Long, friendRaw: String, passphrase: String, saltRaw: String,
+                   cb: (String?, String?) -> Unit) {
     Thread {
         var fp: String? = null
         var err: String? = null
         try {
-            val mixed = KeyMixer.mix(method, Vault.myKey(a), friend, verbal, formula)
-            val key = KeyMixer.deriveKey(mixed)
-            fp = KeyMixer.fingerprint(key)
-            SessionVault.putKey(a, id, key)
+            val f = friendRaw.trim()
+            val fk = (Files.parseKey(f) ?: f).trim()
+            require(HEX64.matches(fk)) { tr("The friend's key must be 64 hex characters", "کلید دوستم باید ۶۴ نویسه‌ی hex باشد") }
+            val salt = saltRaw.trim().lowercase()
+            require(HEX32.matches(salt)) { tr("The salt must be 32 hex characters", "salt باید ۳۲ نویسه‌ی hex باشد") }
+            require(SessionCrypto.normalize(passphrase).split(" ").size >= 8) {
+                tr("The passphrase needs at least 8 words", "عبارت حداقل ۸ کلمه لازم دارد")
+            }
+            val mine = Vault.myKeyBytes(a) ?: throw IllegalArgumentException(
+                tr("Create your own key first (My key page)", "اول کلید خودت را بساز (صفحه‌ی کلید من)"))
+            val blob = SessionCrypto.derive(mine, Crypto.unhex(fk.lowercase()), passphrase, Crypto.unhex(salt))
+            fp = SessionCrypto.fingerprint(blob)
+            SessionVault.putKey(a, id, blob)
         } catch (e: Exception) { err = e.message ?: "error" }
-        val f = fp
+        val f2 = fp
         val e2 = err
-        a.runOnUiThread { cb(f, e2) }
+        a.runOnUiThread { cb(f2, e2) }
     }.start()
 }
 
 /**
- * New / edit contact. The phone number is also the online ID. Encrypted by default: asks for the friend's key,
- * verbal code and mixing method. Optional: your friend's server address (for dedicated servers).
+ * New / edit contact. The phone number is also the online ID. Encrypted by default: needs the friend's key,
+ * the shared passphrase and the shared salt. Optional: the friend's server address.
  */
 fun showAddContact(a: OnlineBase, ex: Contact?, done: () -> Unit) {
     val sv = ScrollView(a)
@@ -171,7 +183,7 @@ fun showAddContact(a: OnlineBase, ex: Contact?, done: () -> Unit) {
     val plainNote = Neo.text(a, tr("Plain text: anyone on the way can read it.",
         "متن ساده: هر کسی در مسیر می‌تواند بخواند."), 12, Neo.RED)
 
-    val friend = Neo.input(a, tr("friend's key", "کلید دوستم")).apply {
+    val friend = Neo.input(a, tr("friend's key (64 hex characters)", "کلید دوستم (۶۴ نویسه‌ی hex)")).apply {
         inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         minLines = 2
     }
@@ -182,22 +194,34 @@ fun showAddContact(a: OnlineBase, ex: Contact?, done: () -> Unit) {
     frow.addView(friend, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
     frow.addView(Icons.button(a, "scan", Neo.ACCENT) { a.scanKey { friend.setText(it) } })
     frow.addView(Icons.button(a, "file", Neo.ACCENT) { a.pickKeyFile { friend.setText(it) } })
-    val verbal = Neo.input(a, tr("verbal code (2-3 words)", "کد شفاهی (۲-۳ کلمه)"))
-    val formula = Neo.input(a, tr("mixer formula", "فرمول اختلاط")).apply { setText(KeyMixer.DEFAULT_FORMULA) }
-    val descView = Neo.text(a, "", 11, Neo.DIM)
-    var method = MixMethod.CONCAT
-    val mBtn = Neo.button(a, "")
+
+    val pass = Neo.input(a, tr("shared passphrase (words)", "عبارت مشترک (کلمات)")).apply {
+        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        minLines = 2
+    }
+    val salt = Neo.input(a, tr("shared salt (32 hex characters)", "salt مشترک (۳۲ نویسه‌ی hex)"))
+    val importShared = Neo.button(a, tr("Import passphrase + salt (QR / file / paste)", "وارد کردن عبارت و salt (QR / فایل / paste)"))
+    importShared.setOnClickListener {
+        a.importRaw(tr("Passphrase + salt", "عبارت و salt")) { raw ->
+            val pr = SharedSecret.parse(raw)
+            if (pr == null) {
+                Toast.makeText(a, tr("This is not a passphrase + salt", "این عبارت و salt نیست"), Toast.LENGTH_SHORT).show()
+            } else {
+                pass.setText(pr.first)
+                salt.setText(pr.second)
+            }
+        }
+    }
 
     val fireBox = Neo.vertical(a)
-    Neo.add(fireBox, Neo.text(a, tr("AES key = my key (automatic) + friend's key + verbal code + method.",
-        "کلید AES = کلید من (خودکار) + کلید دوستم + کد شفاهی + روش ترکیب."), 11, Neo.DIM))
+    Neo.add(fireBox, Neo.text(a, tr("AES key = HKDF( my key + friend's key + passphrase, salt ). Nothing here is sent anywhere.",
+        "کلید AES = HKDF( کلید من + کلید دوستم + عبارت، salt ). هیچ‌کدام از این‌ها فرستاده نمی‌شود."), 11, Neo.DIM))
     Neo.add(fireBox, frow, 8)
-    Neo.add(fireBox, verbal, 8)
-    Neo.add(fireBox, mBtn, 8)
-    Neo.add(fireBox, descView, 2)
-    Neo.add(fireBox, formula, 8)
+    Neo.add(fireBox, importShared, 8)
+    Neo.add(fireBox, pass, 8)
+    Neo.add(fireBox, salt, 8)
     if (ex != null) {
-        Neo.add(fireBox, Neo.text(a, tr("Leave empty to keep the current session key.",
+        Neo.add(fireBox, Neo.text(a, tr("Leave these empty to keep the current session key.",
             "برای نگه‌داشتن کلید جلسه‌ی فعلی خالی بگذارید."), 11, Neo.DIM), 6)
     }
 
@@ -226,16 +250,8 @@ fun showAddContact(a: OnlineBase, ex: Contact?, done: () -> Unit) {
     Neo.add(col, srow, 4)
 
     fun refresh() {
-        mBtn.text = "⚙ " + method.label()
-        descView.text = method.desc
-        formula.visibility = if (method == MixMethod.FORMULA) View.VISIBLE else View.GONE
         fireBox.visibility = if (fire.isChecked) View.VISIBLE else View.GONE
         plainNote.visibility = if (fire.isChecked) View.GONE else View.VISIBLE
-    }
-    mBtn.setOnClickListener {
-        val all = MixMethod.values()
-        Dialogs.choose(a, tr("Mixing method", "روش ترکیب کلید"),
-            Array(all.size) { all[it].label() }, method.ordinal) { method = all[it]; refresh() }
     }
     fire.setOnCheckedChangeListener { _, _ -> refresh() }
     if (ex != null) { name.setText(ex.name); phone.setText(ex.phone); fire.isChecked = ex.level == 1 }
@@ -256,25 +272,21 @@ fun showAddContact(a: OnlineBase, ex: Contact?, done: () -> Unit) {
         val ph = phone.text.toString().trim()
         val isFire = fire.isChecked
         val f = friend.text.toString().trim()
-        val vb = verbal.text.toString().trim()
-        val fm = formula.text.toString()
-        val mt = method
+        val ps = pass.text.toString().trim()
+        val sl = salt.text.toString().trim()
         val st = srv.text.toString().trim()
         val srvInfo = if (st.isEmpty()) null else OnlineParse.server(st)
-        val hasKeys = isFire && f.isNotEmpty() && vb.isNotEmpty()
+        val any = f.isNotEmpty() || ps.isNotEmpty() || sl.isNotEmpty()
+        val all = f.isNotEmpty() && ps.isNotEmpty() && sl.isNotEmpty()
 
         if (n.isEmpty() || ph.isEmpty()) { t(tr("name and number required", "نام و شماره لازم است")); return@setOnClickListener }
         if (st.isNotEmpty() && srvInfo == null) {
             t(tr("This is not a server address", "این آدرس سرور نیست"))
             return@setOnClickListener
         }
-        if (isFire && ex == null && !hasKeys) {
-            t(tr("Encrypted contacts need the friend's key + verbal code", "مخاطب رمزنگاری‌شده کلید دوستم و کد شفاهی لازم دارد"))
+        if (isFire && ((ex == null && !all) || (any && !all))) {
+            t(tr("Fill in the friend's key, the passphrase and the salt", "کلید دوستم، عبارت و salt را کامل وارد کن"))
             return@setOnClickListener
-        }
-        if (hasKeys) {
-            try { KeyMixer.mix(mt, Vault.myKey(a), f, vb, fm) }
-            catch (e: Exception) { t(tr("invalid input: ", "ورودی نامعتبر: ") + (e.message ?: "")); return@setOnClickListener }
         }
 
         val level = if (isFire) 1 else 0
@@ -290,18 +302,19 @@ fun showAddContact(a: OnlineBase, ex: Contact?, done: () -> Unit) {
         if (!ok) { t(tr("number already exists", "این شماره قبلاً ثبت شده")); return@setOnClickListener }
         if (srvInfo != null) Online.setContactServer(a, id, srvInfo)
 
-        if (!hasKeys) { d.dismiss(); done(); return@setOnClickListener }
+        if (!(isFire && all)) { d.dismiss(); done(); return@setOnClickListener }
 
         btn.isEnabled = false
-        deriveAndStore(a, id, f, vb, mt, fm) { fp, err ->
+        t(tr("Deriving the key (a few seconds)…", "در حال ساخت کلید (چند ثانیه)…"))
+        deriveAndStore(a, id, f, ps, sl) { fp, err ->
             d.dismiss()
             done()
             if (err != null) {
-                t(tr("invalid input: ", "ورودی نامعتبر: ") + err)
+                t(err)
             } else {
                 Dialogs.info(a, tr("Fingerprint", "اثر انگشت کلید"),
-                    fp + "\n\n" + tr("Read this aloud to your contact. If it differs, messages will show raw text only.",
-                        "این کد را شفاهی با مخاطب مقایسه کنید. اگر فرق داشت، پیام‌ها فقط به شکل متن رمزشده دیده می‌شوند."))
+                    fp + "\n\n" + tr("Read this aloud to your contact. If it differs, messages will not decrypt.",
+                        "این کد را شفاهی با مخاطب مقایسه کنید. اگر فرق داشت، پیام‌ها رمزگشایی نمی‌شوند."))
             }
         }
     }
