@@ -2,6 +2,7 @@ package com.shadow.society.app
 
 import android.content.Intent
 import android.os.Bundle
+import android.text.InputType
 import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
@@ -9,6 +10,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import java.util.Locale
 
 class SettingsActivity : BaseActivity() {
     private val lockSecs = intArrayOf(0, 15, 30, 60, 300)
@@ -36,6 +38,10 @@ class SettingsActivity : BaseActivity() {
     private fun cardTitle(card: LinearLayout, s: String) {
         card.addView(Neo.text(this, s, 15, Neo.TEXT).apply { typeface = Neo.BOLD })
     }
+
+    private fun langName(): String =
+        if (Prefs.int(this, "lang_sys", 0) == 1) tr("System default", "زبان سیستم")
+        else if (Lang.code == "en") "English" else "فارسی"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -69,12 +75,19 @@ class SettingsActivity : BaseActivity() {
             val labels = Array(THEMES.size) { Neo.themeName(THEMES[it]) }
             Dialogs.choose(this, tr("Theme", "تم"), labels, THEMES.indexOf(Neo.P)) { w ->
                 Prefs.putStr(this, "theme", THEMES[w].id)
-                applyAndRebuild()
+                applyAndRebuild()   // the Matrix rain turns on by itself with the Matrix theme
             }
         }
-        btn(look, tr("Language: ", "زبان: ") + (if (Lang.code == "en") "English" else "فارسی"), 8) {
-            Dialogs.choose(this, tr("Language", "زبان"), arrayOf("فارسی", "English"), if (Lang.code == "en") 1 else 0) { w ->
-                Prefs.putStr(this, "lang", if (w == 1) "en" else "fa")
+        btn(look, tr("Language: ", "زبان: ") + langName(), 8) {
+            val labels = arrayOf(tr("System default", "زبان سیستم"), "فارسی", "English")
+            Dialogs.choose(this, tr("Language", "زبان"), labels, -1) { w ->
+                if (w == 0) {
+                    Prefs.putInt(this, "lang_sys", 1)
+                    Prefs.putStr(this, "lang", if (Locale.getDefault().language == "fa") "fa" else "en")
+                } else {
+                    Prefs.putInt(this, "lang_sys", 0)
+                    Prefs.putStr(this, "lang", if (w == 1) "fa" else "en")
+                }
                 applyAndRebuild()
             }
         }
@@ -84,11 +97,6 @@ class SettingsActivity : BaseActivity() {
                 Prefs.putInt(this, "icon_pct", sizes[w])
                 applyAndRebuild()
             }
-        }
-        btn(look, tr("Matrix rain: ", "بارش ماتریکس: ") +
-                (if (Prefs.int(this, "rain", 1) == 1) tr("ON", "روشن") else tr("OFF", "خاموش")), 8) {
-            Prefs.putInt(this, "rain", if (Prefs.int(this, "rain", 1) == 1) 0 else 1)
-            applyAndRebuild()
         }
         Neo.add(col, look, 0)
 
@@ -103,14 +111,8 @@ class SettingsActivity : BaseActivity() {
                 refresh()
             }
         }
-        keysBtn = btn(sec, "", 8) {
-            val labels = Array(KeyPolicy.OPTIONS.size) { KeyPolicy.label(KeyPolicy.OPTIONS[it]) }
-            Dialogs.choose(this, tr("Clear session keys", "پاک شدن کلیدهای جلسه"), labels, -1) { w ->
-                KeyPolicy.set(this, KeyPolicy.OPTIONS[w])
-                refresh()
-            }
-        }
-        btn(sec, tr("My key (copy / send / QR)", "کلید من (کپی / ارسال / QR)"), 8) { startActivity(Intent(this, KeyActivity::class.java)) }
+        keysBtn = btn(sec, "", 8) { keyPolicy() }
+        btn(sec, tr("My key & shared passphrase", "کلید من و عبارت مشترک"), 8) { startActivity(Intent(this, KeyActivity::class.java)) }
         btn(sec, tr("Advanced…", "پیشرفته…"), 8) { advanced() }
         Neo.add(col, sec, 14)
 
@@ -148,26 +150,30 @@ class SettingsActivity : BaseActivity() {
     override fun onReady() { refresh() }
 
     private fun refresh() {
-        lockTypeBtn.text = tr("Lock: ", "قفل: ") + LockType.label(Vault.lockType(this))
+        lockTypeBtn.text = tr("Login: ", "ورود: ") + LockType.label(Vault.lockType(this))
         autoLockBtn.text = tr("Lock app after leaving: ", "قفل برنامه پس از خروج: ") + lockLabel(Prefs.int(this, "autolock", 60))
-        keysBtn.text = tr("Session keys: ", "کلیدهای جلسه: ") + KeyPolicy.label(KeyPolicy.minutes(this))
+        keysBtn.text = tr("Session keys: ", "کلیدهای جلسه: ") +
+                (if (KeyPolicy.minutes(this) < 0) KeyPolicy.label(-1) else tr("delete after ", "حذف پس از ") + KeyPolicy.label(KeyPolicy.minutes(this)))
         val s = Online.myServer(this)
         onlineInfo.text = tr("Number: ", "شماره: ") + (Online.myPhone(this) ?: "—") + "\n" +
                 tr("Server: ", "سرور: ") + (if (s != null) Online.host(s.u) else "—") + "\n" +
                 (if (Online.ready(this)) tr("ready ✓", "آماده ✓") else tr("not ready", "آماده نیست"))
     }
 
-    // ---------- lock ----------
+    // ---------- login type ----------
     private fun changeLock() {
-        val types = arrayListOf(LockType.PASS, LockType.PIN, LockType.PATTERN)
-        if (AppLock.available(this)) types.add(LockType.BIO)
+        val types = LockType.CHOICES
         val labels = Array(types.size) { LockType.label(types[it]) }
-        Dialogs.choose(this, tr("New lock type", "نوع قفل جدید"), labels, types.indexOf(Vault.lockType(this))) { w ->
+        Dialogs.choose(this, tr("New login type", "نوع ورود جدید"), labels, types.indexOf(Vault.lockType(this))) { w ->
             val t = types[w]
             if (t == LockType.BIO) {
-                AppLock.prompt(this, { applyLock(t, "") }, { m -> toast(m) })
+                if (!AppLock.available(this)) {
+                    toast(tr("Set a screen lock / fingerprint on your phone first", "اول در گوشی قفل صفحه یا اثر انگشت را فعال کن"))
+                } else {
+                    AppLock.prompt(this, { applyLock(t, "") }, { m -> toast(m) })
+                }
             } else {
-                askSecret(this, t, tr("New lock", "قفل جدید"), true) { s -> applyLock(t, s) }
+                askSecret(this, t, tr("New login", "ورود جدید"), true) { s -> applyLock(t, s) }
             }
         }
     }
@@ -177,10 +183,48 @@ class SettingsActivity : BaseActivity() {
             val ok = Vault.changeLock(this, t, secret)
             if (ok) Duress.clear(this)
             runOnUiThread {
-                toast(if (ok) tr("Lock changed (duress code reset)", "قفل تغییر کرد (کد اضطراری پاک شد)") else tr("Failed", "ناموفق"))
+                toast(if (ok) tr("Changed (duress code reset)", "تغییر کرد (کد اضطراری پاک شد)") else tr("Failed", "ناموفق"))
                 refresh()
             }
         }.start()
+    }
+
+    // ---------- session keys: never delete / delete after… ----------
+    private fun keyPolicy() {
+        val labels = arrayOf(tr("Never delete", "هرگز حذف نشود"), tr("Delete after…", "حذف شود پس از…"))
+        Dialogs.choose(this, tr("Session keys", "کلیدهای جلسه"), labels, if (KeyPolicy.minutes(this) < 0) 0 else 1) { w ->
+            if (w == 0) {
+                KeyPolicy.set(this, -1)
+                refresh()
+            } else {
+                deleteAfter()
+            }
+        }
+    }
+
+    private fun deleteAfter() {
+        val col = Neo.vertical(this)
+        val p = Neo.dp(this, 20)
+        col.setPadding(p, p / 2, p, 0)
+        val e = Neo.input(this, tr("a number", "یک عدد")).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText("7")
+        }
+        Neo.add(col, e)
+        fun apply(mult: Int) {
+            val n = e.text.toString().toLongOrNull()
+            if (n == null || n <= 0 || n * mult > 5_256_000L) {
+                toast(tr("Enter a number (up to 10 years)", "یک عدد وارد کن (حداکثر ۱۰ سال)"))
+            } else {
+                KeyPolicy.set(this, (n * mult).toInt())
+                refresh()
+            }
+        }
+        Neo.dialog(this).setTitle(tr("Delete session keys after…", "حذف کلیدهای جلسه پس از…")).setView(col)
+            .setPositiveButton(tr("minutes", "دقیقه")) { _, _ -> apply(1) }
+            .setNeutralButton(tr("hours", "ساعت")) { _, _ -> apply(60) }
+            .setNegativeButton(tr("days", "روز")) { _, _ -> apply(1440) }
+            .show()
     }
 
     // ---------- advanced ----------
@@ -188,7 +232,8 @@ class SettingsActivity : BaseActivity() {
         val labels = arrayOf(
             tr("Duress code", "کد اضطراری"),
             (if (Lockdown.isOn(this)) tr("Calculator disguise: ON", "ماشین‌حساب: روشن") else tr("Calculator disguise: OFF", "ماشین‌حساب: خاموش")),
-            tr("Default SIM: ", "سیم‌کارت پیش‌فرض: ") + Sims.label(this, Prefs.int(this, "sim", -1)))
+            tr("Default SIM: ", "سیم‌کارت پیش‌فرض: ") + Sims.label(this, Prefs.int(this, "sim", -1)),
+            tr("Crypto self-test", "خودآزمون رمزنگاری"))
         Dialogs.choose(this, tr("Advanced", "پیشرفته"), labels, -1) { w ->
             when (w) {
                 0 -> setDuress()
@@ -196,15 +241,30 @@ class SettingsActivity : BaseActivity() {
                     Lockdown.set(this, !Lockdown.isOn(this))
                     toast(tr("Launcher icon will change in a few seconds", "آیکن چند ثانیه‌ی دیگر عوض می‌شود"))
                 }
-                else -> Sims.choose(this, "sim", false) { refresh() }
+                2 -> Sims.choose(this, "sim", false) { refresh() }
+                else -> selfTest()
             }
         }
+    }
+
+    private fun selfTest() {
+        toast(tr("Running… (a few seconds)", "در حال اجرا… (چند ثانیه)"))
+        Thread {
+            val ok = try { SessionCrypto.selfTest() } catch (e: Throwable) { false }
+            runOnUiThread {
+                Dialogs.info(this, tr("Crypto self-test", "خودآزمون رمزنگاری"),
+                    if (ok) tr("✓ This phone gives exactly the same results as the Python reference (Argon2id + HKDF + AES-GCM).",
+                        "✓ این گوشی دقیقاً همان نتیجه‌ی نسخه‌ی پایتون را می‌دهد (Argon2id + HKDF + AES-GCM).")
+                    else tr("✗ Results differ from the reference. Do not rely on encryption between this app and the Python version.",
+                        "✗ نتیجه با مرجع فرق دارد. به رمزنگاری بین این برنامه و نسخه‌ی پایتون تکیه نکن."))
+            }
+        }.start()
     }
 
     private fun setDuress() {
         val t = Vault.lockType(this)
         if (t == LockType.BIO) {
-            toast(tr("Needs a password, PIN or pattern lock", "نیاز به قفل رمز، پین یا الگو دارد"))
+            toast(tr("Needs a PIN or password login", "نیاز به ورود با پین یا رمز عبور دارد"))
             return
         }
         askSecret(this, t, tr("Duress code (wipes everything when entered at login)", "کد اضطراری (با وارد کردنش در ورود همه‌چیز پاک می‌شود)"), true) { s ->
@@ -212,7 +272,7 @@ class SettingsActivity : BaseActivity() {
                 val same = Vault.deriveDbKey(this, s) == SessionVault.dbKey()
                 if (!same) Duress.set(this, s)
                 runOnUiThread {
-                    toast(if (same) tr("Must differ from your lock", "باید با قفل اصلی فرق داشته باشد") else tr("Saved", "ذخیره شد"))
+                    toast(if (same) tr("Must differ from your login", "باید با ورود اصلی فرق داشته باشد") else tr("Saved", "ذخیره شد"))
                 }
             }.start()
         }
