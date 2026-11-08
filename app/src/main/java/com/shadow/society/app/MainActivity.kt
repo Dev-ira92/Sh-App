@@ -7,7 +7,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
-import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -16,8 +15,8 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 
 /**
- * Lock screen. First run: choose a lock type (password / PIN / pattern / phone fingerprint-face-lock),
- * set it, then the "My key" page opens. Next runs: unlock with the chosen type.
+ * First run: choose how to log in (PIN / password / fingerprint) and set it, then the "My key" page opens.
+ * Next runs: unlock with the chosen type.
  */
 class MainActivity : AppCompatActivity() {
     private val ui = Handler(Looper.getMainLooper())
@@ -45,7 +44,7 @@ class MainActivity : AppCompatActivity() {
             setContentView(t)
             return
         }
-        if (SessionVault.isUnlocked()) { openList(false); return }
+        if (SessionVault.isUnlocked()) { openNext(false); return }
         first = !Vault.exists(this)
         buildShell()
         if (first) {
@@ -54,6 +53,26 @@ class MainActivity : AppCompatActivity() {
             type = Vault.lockType(this)
             startLogin()
         }
+    }
+
+    private fun langRow(): LinearLayout {
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.CENTER
+        for ((code, name) in listOf("fa" to "فارسی", "en" to "English")) {
+            val b = if (Lang.code == code) Neo.primary(this, name) else Neo.button(this, name)
+            b.textSize = 13f
+            b.setOnClickListener {
+                Prefs.putStr(this, "lang", code)
+                Prefs.putInt(this, "lang_sys", 0)
+                Neo.changed(this)
+                recreate()
+            }
+            val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            lp.setMargins(Neo.dp(this, 4), 0, Neo.dp(this, 4), 0)
+            row.addView(b, lp)
+        }
+        return row
     }
 
     private fun buildShell() {
@@ -65,13 +84,11 @@ class MainActivity : AppCompatActivity() {
         val pad0 = Neo.dp(this, 24)
         wrap.setPadding(pad0, pad0, pad0, pad0)
 
-        val card = Neo.vertical(this)
-        card.background = Neo.box(this, Neo.withAlpha(Neo.BG, 0xDD), Neo.DIM, 10)
-        card.setPadding(pad0, pad0, pad0, pad0)
+        val card = Neo.card(this)
 
         val lg = ImageView(this)
         lg.setImageDrawable(Icons.drawable(this, "shield", Neo.ACCENT, 56, 1f))
-        val a = ObjectAnimator.ofFloat(lg, "alpha", 0.45f, 1f)
+        val a = ObjectAnimator.ofFloat(lg, "alpha", 0.55f, 1f)
         a.duration = 1400
         a.repeatCount = ValueAnimator.INFINITE
         a.repeatMode = ValueAnimator.REVERSE
@@ -80,19 +97,16 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_HORIZONTAL
         })
 
-        val title = Neo.glow(Neo.text(this, "Sh-So", 36, Neo.ACCENT))
+        val title = Neo.glow(Neo.text(this, "Shadow", 34, Neo.ACCENT))
         title.typeface = Neo.BOLD
         title.gravity = Gravity.CENTER
         card.addView(title)
 
-        val slogan = Neo.text(this, "", 13, Neo.DIM)
-        slogan.gravity = Gravity.CENTER
-        card.addView(slogan)
-        typeText(slogan, "> " + tr("The dragon that breathes in the dark.", "اژدهایی که در تاریکی نفس می‌کشد.") + "_", 0)
+        if (first) Neo.add(card, langRow(), 14)
 
         info = Neo.text(this, "", 14, Neo.TEXT)
         info.gravity = Gravity.CENTER
-        Neo.add(card, info, 20)
+        Neo.add(card, info, 18)
 
         holder = Neo.vertical(this)
         Neo.add(card, holder, 10)
@@ -106,12 +120,6 @@ class MainActivity : AppCompatActivity() {
         setContentView(Neo.backdrop(this, sv, 0.8f))
     }
 
-    private fun typeText(t: TextView, s: String, i: Int) {
-        if (i > s.length) return
-        t.text = s.substring(0, i)
-        ui.postDelayed({ typeText(t, s, i + 1) }, 55)
-    }
-
     private fun setPad(p: SecretPad) {
         pad = p
         holder.removeAllViews()
@@ -120,25 +128,23 @@ class MainActivity : AppCompatActivity() {
 
     // ---------- first run ----------
     private fun showChooser() {
-        info.text = tr("How do you want to unlock the app? (you can change it later in Settings)",
+        info.text = tr("How do you want to log in? (you can change it later in Settings)",
             "چطور می‌خواهی وارد برنامه شوی؟ (بعداً از تنظیمات قابل تغییر است)")
         holder.removeAllViews()
-        val types = arrayListOf(LockType.PASS, LockType.PIN, LockType.PATTERN)
-        if (AppLock.available(this)) types.add(LockType.BIO)
-        for (t in types) {
-            val b = Neo.button(this, LockType.label(t))
+        for (t in LockType.CHOICES) {
+            val b = Neo.primary(this, LockType.label(t))
             Neo.add(holder, b, 8)
             b.setOnClickListener { choose(t) }
-        }
-        if (!AppLock.available(this)) {
-            Neo.add(holder, Neo.text(this, tr("Fingerprint / face needs a screen lock on the phone.",
-                "اثر انگشت / چهره نیاز به قفل صفحه در گوشی دارد."), 11, Neo.DIM), 10)
         }
     }
 
     private fun choose(t: String) {
         type = t
         if (t == LockType.BIO) {
+            if (!AppLock.available(this)) {
+                err(tr("Set a screen lock / fingerprint on your phone first", "اول در گوشی قفل صفحه یا اثر انگشت را فعال کن"))
+                return
+            }
             AppLock.prompt(this, { finishCreate("") }, { m -> err(m) })
         } else {
             firstSecret = null
@@ -174,7 +180,7 @@ class MainActivity : AppCompatActivity() {
         if (busy) return
         busy = true
         status.setTextColor(Neo.DIM)
-        status.text = "> " + tr("deriving keys...", "در حال ساخت کلیدها...")
+        status.text = "> " + tr("preparing…", "در حال آماده‌سازی…")
         Thread {
             val r = try { create(type, secret); OK } catch (e: Exception) { ERROR }
             ui.post { busy = false; done(r) }
@@ -187,7 +193,6 @@ class MainActivity : AppCompatActivity() {
         Prefs.putStr(this, "lock_type", t)
         SessionVault.unlock(Vault.deriveDbKey(this, secret))
         Db.get(this).db()
-        Vault.myKey(this)
     }
 
     // ---------- login ----------
@@ -195,7 +200,7 @@ class MainActivity : AppCompatActivity() {
         holder.removeAllViews()
         if (type == LockType.BIO) {
             info.text = tr("Verify it's you", "هویت خود را تأیید کنید")
-            val b = Neo.button(this, tr("Unlock", "باز کردن"))
+            val b = Neo.primary(this, tr("Unlock", "باز کردن"))
             Neo.add(holder, b, 8)
             b.setOnClickListener { askBio() }
             askBio()
@@ -223,7 +228,7 @@ class MainActivity : AppCompatActivity() {
         }
         busy = true
         status.setTextColor(Neo.DIM)
-        status.text = "> " + tr("deriving keys...", "در حال ساخت کلیدها...")
+        status.text = "> " + tr("checking…", "در حال بررسی…")
         Thread {
             val r = try {
                 if (type != LockType.BIO && Duress.matches(this, secret)) {
@@ -233,7 +238,6 @@ class MainActivity : AppCompatActivity() {
                     OK
                 } else if (Db.open(this, Vault.deriveDbKey(this, secret))) {
                     Prefs.putInt(this, "fails", 0)
-                    Vault.myKey(this)
                     OK
                 } else WRONG
             } catch (e: Exception) { ERROR }
@@ -242,7 +246,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun done(r: Int) {
-        if (r == OK) { openList(first); return }
+        if (r == OK) { openNext(first); return }
         pad?.clear()
         if (r == WRONG) {
             val fails = Prefs.int(this, "fails", 0) + 1
@@ -260,7 +264,7 @@ class MainActivity : AppCompatActivity() {
         status.text = "> $m"
     }
 
-    private fun openList(showKey: Boolean) {
+    private fun openNext(showKey: Boolean) {
         val i = Intent(this, if (showKey) KeyActivity::class.java else ChatListActivity::class.java)
         if (showKey) i.putExtra("first", true)
         startActivity(i)
