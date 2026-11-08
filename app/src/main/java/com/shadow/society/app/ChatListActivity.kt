@@ -17,7 +17,6 @@ class ChatListActivity : OnlineBase() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (isFinishing) return
-        if (Pulse.hours(this) != 0) Pulse.set(this, 0)   // Dragon's Pulse is switched off
 
         val root = Neo.vertical(this)
         val p = Neo.dp(this, 12)
@@ -28,19 +27,20 @@ class ChatListActivity : OnlineBase() {
         bar.setBackgroundColor(Neo.PANEL)
         bar.elevation = Neo.dp(this, 6).toFloat()
         bar.setPadding(p, p / 3, p / 2, p / 3)
-        val title = Neo.glow(Neo.text(this, "Sh-So", 22, Neo.BARTEXT))
+        val title = Neo.glow(Neo.text(this, "Shadow", 22, Neo.BARTEXT))
         title.typeface = Neo.BOLD
         bar.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         bar.addView(Icons.button(this, "tune", Neo.BARTEXT) { startActivity(Intent(this, SettingsActivity::class.java)) })
 
-        // red trash = destroy all data (hold)
+        // red trash = delete ALL data (hold)
         val wipe = Icons.button(this, "trash", Neo.RED) {
             Toast.makeText(this, tr("hold to delete ALL data", "برای حذف همه‌ی داده‌ها نگه دارید"), Toast.LENGTH_SHORT).show()
         }
         wipe.setOnLongClickListener { panic(); true }
         bar.addView(wipe)
 
-        bar.addView(Icons.button(this, "exit", Neo.BARTEXT) { SessionVault.lockAll(); finishAffinity() })
+        // exit only locks the app; the session keys stay in the vault
+        bar.addView(Icons.button(this, "exit", Neo.BARTEXT) { SessionVault.lock(); finishAffinity() })
         root.addView(bar)
 
         val holder = FrameLayout(this)
