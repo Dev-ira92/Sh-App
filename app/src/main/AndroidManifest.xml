@@ -14,8 +14,9 @@
     <application
         android:name=".ShadowApp"
         android:allowBackup="false"
+        android:largeHeap="true"
         android:icon="@drawable/ic_launcher"
-        android:label="Sh-So"
+        android:label="Shadow"
         android:supportsRtl="false"
         android:theme="@style/Theme.ShSo">
 
@@ -24,7 +25,7 @@
 
         <activity-alias android:name=".NormalAlias" android:targetActivity=".MainActivity"
             android:enabled="true" android:exported="true"
-            android:icon="@drawable/ic_launcher" android:label="Sh-So">
+            android:icon="@drawable/ic_launcher" android:label="Shadow">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
