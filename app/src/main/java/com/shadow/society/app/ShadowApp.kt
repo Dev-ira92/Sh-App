@@ -8,24 +8,27 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.WindowManager
+import java.util.Locale
 
 /**
- * App-wide policy: theme load, FLAG_SECURE, and two separate timers after you leave the app:
- *  - auto-lock: the database locks (login screen again)
- *  - key clearing: session keys are destroyed (when leaving / 10 min / 30 min / never),
- *    or kept inside the encrypted vault (and restored after login) if you chose that in Settings.
+ * App-wide policy: defaults (SMS theme, system language), FLAG_SECURE, auto-lock after leaving the app,
+ * and the Calculator disguise. Session keys are NOT cleared here: they follow the "session keys" setting.
  */
 class ShadowApp : Application(), Application.ActivityLifecycleCallbacks {
     private var started = 0
     private var leftAt = 0L
     private val h = Handler(Looper.getMainLooper())
     private val lockTask = Runnable { if (started == 0) SessionVault.lock() }
-    private val keyTask = Runnable { if (started == 0) SessionVault.wipeKeys() }
 
     private fun autoLockSec(): Int = Prefs.int(this, "autolock", 60)
 
     override fun onCreate() {
         super.onCreate()
+        if (Prefs.str(this, "theme") == null) Prefs.putStr(this, "theme", "sms")      // default theme: Mobile SMS
+        if (Prefs.str(this, "lang") == null) Prefs.putInt(this, "lang_sys", 1)         // default: system language
+        if (Prefs.int(this, "lang_sys", 0) == 1) {
+            Prefs.putStr(this, "lang", if (Locale.getDefault().language == "fa") "fa" else "en")
+        }
         Neo.load(this)
         SessionVault.init(this)
         registerActivityLifecycleCallbacks(this)
@@ -39,12 +42,9 @@ class ShadowApp : Application(), Application.ActivityLifecycleCallbacks {
         if (started == 0 && leftAt > 0) {
             val away = SystemClock.elapsedRealtime() - leftAt
             if (away > autoLockSec() * 1000L) SessionVault.lock()
-            val km = KeyPolicy.ramMinutes(this)
-            if (km >= 0 && away > km * 60000L) SessionVault.wipeKeys()
         }
         started++
         h.removeCallbacks(lockTask)
-        h.removeCallbacks(keyTask)
     }
 
     override fun onActivityStopped(a: Activity) {
@@ -54,13 +54,10 @@ class ShadowApp : Application(), Application.ActivityLifecycleCallbacks {
             leftAt = SystemClock.elapsedRealtime()
             val s = autoLockSec()
             if (s <= 0) SessionVault.lock() else h.postDelayed(lockTask, s * 1000L)
-            val km = KeyPolicy.ramMinutes(this)
-            if (km == 0) SessionVault.wipeKeys() else if (km > 0) h.postDelayed(keyTask, km * 60000L)
         }
     }
 
     override fun onActivityResumed(a: Activity) {
-        SessionVault.restoreIfNeeded(this)
         if (Lockdown.isOn(this)) {
             val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager
             am.appTasks.forEach { it.setExcludeFromRecents(true) }
