@@ -10,6 +10,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -19,13 +20,16 @@ import androidx.appcompat.app.AlertDialog
 object LockType {
     const val PASS = "pass"
     const val PIN = "pin"
-    const val PATTERN = "pattern"
     const val BIO = "bio"
+    const val PATTERN = "pattern"   // old locks keep working, but it can no longer be chosen
+
+    /** The three ways to log in. */
+    val CHOICES = listOf(PIN, PASS, BIO)
 
     fun label(t: String): String = when (t) {
-        PIN -> tr("PIN (digits)", "پین عددی")
-        PATTERN -> tr("Pattern", "الگو")
-        BIO -> tr("Fingerprint / face / phone lock", "اثر انگشت / چهره / قفل گوشی")
+        PIN -> tr("Numeric PIN", "پین عددی")
+        BIO -> tr("Fingerprint", "اثر انگشت")
+        PATTERN -> tr("Pattern (old)", "الگو (قدیمی)")
         else -> tr("Password", "رمز عبور")
     }
 
@@ -51,7 +55,7 @@ object LockType {
     }
 }
 
-/** 3x3 pattern grid with bright glowing dots. Calls onDone with the dots (0..8) in the order they were touched. */
+/** Old pattern grid (only for people who already have a pattern lock). */
 class PatternView(c: Context, private val onDone: (List<Int>) -> Unit) : View(c) {
     private val sel = ArrayList<Int>()
     private var fx = -1f
@@ -127,7 +131,7 @@ class PatternView(c: Context, private val onDone: (List<Int>) -> Unit) : View(c)
     }
 }
 
-/** The input for a lock: password box, PIN keypad (big bright digits) or pattern grid. */
+/** The input for a lock: password box, or the PIN keypad (digits light up when touched). */
 class SecretPad(private val ctx: Context, val type: String, private val label: String,
                 private val onSubmit: (String) -> Unit) {
     val view: LinearLayout = Neo.vertical(ctx)
@@ -166,6 +170,19 @@ class SecretPad(private val ctx: Context, val type: String, private val label: S
         e.setOnEditorActionListener { _, _, _ -> go(); true }
     }
 
+    /** Bright look while a key is pressed. */
+    private fun lit(b: Button, k: String, on: Boolean) {
+        if (on) {
+            b.background = Neo.raised(ctx, 14)
+            b.setTextColor(Neo.P.onAccent)
+            b.animate().scaleX(0.93f).scaleY(0.93f).setDuration(60).start()
+        } else {
+            b.background = if (k == "OK") Neo.raised(ctx, 14) else Neo.glass(ctx, 14)
+            b.setTextColor(if (k == "OK") Neo.P.onAccent else Neo.TEXT)
+            b.animate().scaleX(1f).scaleY(1f).setDuration(90).start()
+        }
+    }
+
     private fun buildPin() {
         val d = Neo.glow(Neo.text(ctx, "–", 30, Neo.TEXT))
         d.gravity = Gravity.CENTER
@@ -180,7 +197,14 @@ class SecretPad(private val ctx: Context, val type: String, private val label: S
                 val k = keys[r * 3 + cI]
                 val b = if (k == "OK") Neo.primary(ctx, k) else Neo.button(ctx, k)
                 b.textSize = 24f
-                b.setTextColor(if (k == "OK") Neo.P.onAccent else Neo.TEXT)   // bright digits
+                b.setTextColor(if (k == "OK") Neo.P.onAccent else Neo.TEXT)
+                b.setOnTouchListener { v, e ->
+                    when (e.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> lit(b, k, true)
+                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> v.postDelayed({ lit(b, k, false) }, 140)
+                    }
+                    false
+                }
                 b.setOnClickListener { press(k) }
                 val lp = LinearLayout.LayoutParams(0, Neo.dp(ctx, 60), 1f)
                 lp.setMargins(m, m, m, m)
