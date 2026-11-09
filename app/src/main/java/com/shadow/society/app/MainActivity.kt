@@ -6,6 +6,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.InputType
 import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.ImageView
@@ -15,8 +16,8 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 
 /**
- * First run: choose how to log in (PIN / password / fingerprint) and set it, then the "My key" page opens.
- * Next runs: unlock with the chosen type.
+ * First run: choose how to log in (PIN / password / fingerprint), set it, enter your phone number
+ * (it becomes your online ID), then the "My key" page opens. Next runs: unlock with the chosen type.
  */
 class MainActivity : AppCompatActivity() {
     private val ui = Handler(Looper.getMainLooper())
@@ -27,6 +28,7 @@ class MainActivity : AppCompatActivity() {
     private var first = false
     private var type = LockType.PASS
     private var firstSecret: String? = null
+    private var pendingSecret = ""
     private var busy = false
 
     private companion object {
@@ -145,7 +147,7 @@ class MainActivity : AppCompatActivity() {
                 err(tr("Set a screen lock / fingerprint on your phone first", "اول در گوشی قفل صفحه یا اثر انگشت را فعال کن"))
                 return
             }
-            AppLock.prompt(this, { finishCreate("") }, { m -> err(m) })
+            AppLock.prompt(this, { showPhone("") }, { m -> err(m) })
         } else {
             firstSecret = null
             showEnter(false)
@@ -154,7 +156,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showEnter(confirmStep: Boolean) {
         info.text = if (confirmStep) tr("Repeat to confirm", "برای تأیید دوباره وارد کنید") else LockType.hint(type)
-        val label = if (confirmStep) tr("Enter the app", "ورود به برنامه") else tr("Continue", "ادامه")
+        val label = if (confirmStep) tr("Continue", "ادامه") else tr("Continue", "ادامه")
         setPad(SecretPad(this, type, label) { s -> onNew(s, confirmStep) })
     }
 
@@ -167,7 +169,8 @@ class MainActivity : AppCompatActivity() {
             showEnter(true)
         } else {
             if (s == firstSecret) {
-                finishCreate(s)
+                status.text = ""
+                showPhone(s)
             } else {
                 firstSecret = null
                 err(tr("Did not match. Start again.", "یکسان نبود. از نو."))
@@ -176,13 +179,30 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun finishCreate(secret: String) {
+    /** Step 2: my phone number. It becomes my online ID and is saved inside the encrypted vault. */
+    private fun showPhone(secret: String) {
+        pendingSecret = secret
+        status.text = ""
+        info.text = tr("Your phone number. It is registered as your online ID.", "شماره‌ی موبایل تو. به‌عنوان شناسه‌ی آنلاین ثبت می‌شود.")
+        holder.removeAllViews()
+        val e = Neo.input(this, tr("phone number (0912… or +98912…)", "شماره‌ی موبایل (۰۹۱۲… یا ۹۸+۹۱۲…)"))
+            .apply { inputType = InputType.TYPE_CLASS_PHONE }
+        Neo.add(holder, e, 4)
+        val b = Neo.primary(this, tr("Enter the app", "ورود به برنامه"))
+        Neo.add(holder, b, 12)
+        b.setOnClickListener {
+            val s = e.text.toString().trim()
+            if (Phones.tail(s).length < 6) err(tr("Enter a valid number", "یک شماره‌ی معتبر وارد کن")) else finishCreate(pendingSecret, s)
+        }
+    }
+
+    private fun finishCreate(secret: String, phone: String) {
         if (busy) return
         busy = true
         status.setTextColor(Neo.DIM)
         status.text = "> " + tr("preparing…", "در حال آماده‌سازی…")
         Thread {
-            val r = try { create(type, secret); OK } catch (e: Exception) { ERROR }
+            val r = try { create(type, secret); Online.setMyPhone(this, phone); OK } catch (e: Exception) { ERROR }
             ui.post { busy = false; done(r) }
         }.start()
     }
