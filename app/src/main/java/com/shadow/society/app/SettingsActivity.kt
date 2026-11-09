@@ -112,7 +112,7 @@ class SettingsActivity : BaseActivity() {
             }
         }
         keysBtn = btn(sec, "", 8) { keyPolicy() }
-        btn(sec, tr("My key & shared passphrase", "کلید من و عبارت مشترک"), 8) { startActivity(Intent(this, KeyActivity::class.java)) }
+        btn(sec, tr("My key", "کلید من"), 8) { startActivity(Intent(this, KeyActivity::class.java)) }
         btn(sec, tr("Advanced…", "پیشرفته…"), 8) { advanced() }
         Neo.add(col, sec, 14)
 
@@ -248,13 +248,12 @@ class SettingsActivity : BaseActivity() {
     }
 
     private fun selfTest() {
-        toast(tr("Running… (a few seconds)", "در حال اجرا… (چند ثانیه)"))
         Thread {
             val ok = try { SessionCrypto.selfTest() } catch (e: Throwable) { false }
             runOnUiThread {
                 Dialogs.info(this, tr("Crypto self-test", "خودآزمون رمزنگاری"),
-                    if (ok) tr("✓ This phone gives exactly the same results as the Python reference (Argon2id + HKDF + AES-GCM).",
-                        "✓ این گوشی دقیقاً همان نتیجه‌ی نسخه‌ی پایتون را می‌دهد (Argon2id + HKDF + AES-GCM).")
+                    if (ok) tr("✓ This phone gives exactly the same results as the Python reference (HKDF + AES-GCM).",
+                        "✓ این گوشی دقیقاً همان نتیجه‌ی نسخه‌ی پایتون را می‌دهد (HKDF + AES-GCM).")
                     else tr("✗ Results differ from the reference. Do not rely on encryption between this app and the Python version.",
                         "✗ نتیجه با مرجع فرق دارد. به رمزنگاری بین این برنامه و نسخه‌ی پایتون تکیه نکن."))
             }
