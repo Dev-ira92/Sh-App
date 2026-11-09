@@ -14,8 +14,8 @@ import android.view.ViewGroup
 import android.widget.AbsListView
 import android.widget.BaseAdapter
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
 import java.util.Random
 
 object Dialogs {
@@ -130,9 +130,8 @@ class ContactAdapter(private val ctx: Context) : BaseAdapter() {
     }
 }
 
-/** Keys of one chat: friend's key + shared passphrase + shared salt (the key is built and kept in the vault). */
+/** Keys of one chat: just the friend's key (the session key is built from both keys and kept in the vault). */
 fun showUnlock(a: Activity, c: Contact, scan: ((String) -> Unit) -> Unit, done: () -> Unit) {
-    val sv = ScrollView(a)
     val col = Neo.vertical(a)
     val p = Neo.dp(a, 20)
     col.setPadding(p, p / 2, p, 0)
@@ -147,54 +146,32 @@ fun showUnlock(a: Activity, c: Contact, scan: ((String) -> Unit) -> Unit, done: 
     frow.addView(friend, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
     frow.addView(Icons.button(a, "scan", Neo.ACCENT) { scan { friend.setText(it) } })
     frow.addView(Icons.button(a, "file", Neo.ACCENT) { (a as? BaseActivity)?.pickKeyFile { friend.setText(it) } })
-
-    val pass = Neo.input(a, tr("shared passphrase (words)", "عبارت مشترک (کلمات)")).apply {
-        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-        minLines = 2
-    }
-    val salt = Neo.input(a, tr("shared salt (32 hex characters)", "salt مشترک (۳۲ نویسه‌ی hex)"))
-    val imp = Neo.button(a, tr("Import passphrase + salt (QR / file / paste)", "وارد کردن عبارت و salt (QR / فایل / paste)"))
-    imp.setOnClickListener {
-        (a as? OnlineBase)?.importRaw(tr("Passphrase + salt", "عبارت و salt")) { raw ->
-            val pr = SharedSecret.parse(raw)
-            if (pr == null) {
-                Toast.makeText(a, tr("This is not a passphrase + salt", "این عبارت و salt نیست"), Toast.LENGTH_SHORT).show()
-            } else {
-                pass.setText(pr.first)
-                salt.setText(pr.second)
-            }
-        }
-    }
-
     Neo.add(col, frow)
-    Neo.add(col, imp, 8)
-    Neo.add(col, pass, 8)
-    Neo.add(col, salt, 8)
-    sv.addView(col)
 
     val d = Neo.dialog(a)
         .setTitle(c.name)
-        .setView(sv)
+        .setView(col)
         .setPositiveButton(tr("Build key", "ساخت کلید"), null)
         .setNegativeButton(tr("Cancel", "انصراف"), null)
         .create()
     d.show()
     d.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener { btn ->
-        val f = friend.text.toString()
-        val ps = pass.text.toString()
-        val sl = salt.text.toString()
-        btn.isEnabled = false
-        Toast.makeText(a, tr("Deriving the key (a few seconds)…", "در حال ساخت کلید (چند ثانیه)…"), Toast.LENGTH_SHORT).show()
-        deriveAndStore(a as androidx.appcompat.app.AppCompatActivity, c.id, f, ps, sl) { fp, err ->
-            if (err != null) {
-                btn.isEnabled = true
-                Toast.makeText(a, err, Toast.LENGTH_LONG).show()
-            } else {
-                d.dismiss()
-                Dialogs.info(a, tr("Fingerprint", "اثر انگشت کلید"),
-                    fp + "\n\n" + tr("Read this aloud to your contact. If it differs, messages will not decrypt.",
-                        "این کد را شفاهی با مخاطب مقایسه کنید. اگر فرق داشت، پیام‌ها رمزگشایی نمی‌شوند."))
-                done()
+        val fk = parseFriendKey(friend.text.toString())
+        if (fk == null) {
+            Toast.makeText(a, tr("The friend's key must be 64 hex characters", "کلید دوستم باید ۶۴ نویسه‌ی hex باشد"), Toast.LENGTH_LONG).show()
+        } else {
+            btn.isEnabled = false
+            deriveAndStore(a as AppCompatActivity, c.id, fk) { fp, err ->
+                if (err != null) {
+                    btn.isEnabled = true
+                    Toast.makeText(a, err, Toast.LENGTH_LONG).show()
+                } else {
+                    d.dismiss()
+                    Dialogs.info(a, tr("Fingerprint", "اثر انگشت کلید"),
+                        fp + "\n\n" + tr("Read this aloud to your contact. If it differs, messages will not decrypt.",
+                            "این کد را شفاهی با مخاطب مقایسه کنید. اگر فرق داشت، پیام‌ها رمزگشایی نمی‌شوند."))
+                    done()
+                }
             }
         }
     }
