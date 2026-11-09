@@ -6,11 +6,9 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.text.InputType
 import android.view.Gravity
-import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.Switch
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -129,29 +127,25 @@ abstract class BaseActivity : AppCompatActivity() {
 }
 
 private val HEX64 = Regex("[0-9a-fA-F]{64}")
-private val HEX32 = Regex("[0-9a-f]{32}")
 
-/**
- * Builds the session key from my key + the friend's key + the shared passphrase + the shared salt
- * (Argon2id + HKDF, takes a few seconds) and stores it. The keys are never sent anywhere.
- */
-fun deriveAndStore(a: AppCompatActivity, id: Long, friendRaw: String, passphrase: String, saltRaw: String,
-                   cb: (String?, String?) -> Unit) {
+/** The friend's key as lowercase hex, or null. Accepts a pasted key, the JSON file or a "SHSOKEY1|…" line. */
+fun parseFriendKey(raw: String): String? {
+    val t = raw.trim()
+    val k = (Files.parseKey(t) ?: t).trim()
+    return if (HEX64.matches(k)) k.lowercase() else null
+}
+
+/** Builds the session key from my key + the friend's key (HKDF, instant) and stores it. Keys are never sent anywhere. */
+fun deriveAndStore(a: AppCompatActivity, id: Long, friendHex: String, cb: (String?, String?) -> Unit) {
     Thread {
         var fp: String? = null
         var err: String? = null
         try {
-            val f = friendRaw.trim()
-            val fk = (Files.parseKey(f) ?: f).trim()
-            require(HEX64.matches(fk)) { tr("The friend's key must be 64 hex characters", "کلید دوستم باید ۶۴ نویسه‌ی hex باشد") }
-            val salt = saltRaw.trim().lowercase()
-            require(HEX32.matches(salt)) { tr("The salt must be 32 hex characters", "salt باید ۳۲ نویسه‌ی hex باشد") }
-            require(SessionCrypto.normalize(passphrase).split(" ").size >= 8) {
-                tr("The passphrase needs at least 8 words", "عبارت حداقل ۸ کلمه لازم دارد")
-            }
             val mine = Vault.myKeyBytes(a) ?: throw IllegalArgumentException(
                 tr("Create your own key first (My key page)", "اول کلید خودت را بساز (صفحه‌ی کلید من)"))
-            val blob = SessionCrypto.derive(mine, Crypto.unhex(fk.lowercase()), passphrase, Crypto.unhex(salt))
+            if (Crypto.hex(mine) == friendHex) throw IllegalArgumentException(
+                tr("That is your own key. Enter your friend's key.", "این کلید خودت است. کلید دوستت را وارد کن."))
+            val blob = SessionCrypto.derive(mine, Crypto.unhex(friendHex))
             fp = SessionCrypto.fingerprint(blob)
             SessionVault.putKey(a, id, blob)
         } catch (e: Exception) { err = e.message ?: "error" }
@@ -162,8 +156,8 @@ fun deriveAndStore(a: AppCompatActivity, id: Long, friendRaw: String, passphrase
 }
 
 /**
- * New / edit contact. The phone number is also the online ID. Encrypted by default: needs the friend's key,
- * the shared passphrase and the shared salt. Optional: the friend's server address.
+ * New / edit contact: first name, last name, phone number (also the online ID), friend's key,
+ * and the friend's server address (optional, for online). Everything is encrypted.
  */
 fun showAddContact(a: OnlineBase, ex: Contact?, done: () -> Unit) {
     val sv = ScrollView(a)
@@ -172,16 +166,10 @@ fun showAddContact(a: OnlineBase, ex: Contact?, done: () -> Unit) {
     col.setPadding(p, p / 2, p, 0)
     sv.addView(col)
 
-    val name = Neo.input(a, tr("name", "نام"))
+    val first = Neo.input(a, tr("first name", "نام"))
+    val last = Neo.input(a, tr("last name", "نام خانوادگی"))
     val phone = Neo.input(a, tr("phone number (also the online ID)", "شماره‌ی موبایل (شناسه‌ی آنلاین هم همین است)"))
         .apply { inputType = InputType.TYPE_CLASS_PHONE }
-    val fire = Switch(a).apply {
-        text = tr("🔐 Encrypted (recommended)", "🔐 رمزنگاری‌شده (پیشنهادی)")
-        setTextColor(Neo.TEXT)
-        isChecked = true
-    }
-    val plainNote = Neo.text(a, tr("Plain text: anyone on the way can read it.",
-        "متن ساده: هر کسی در مسیر می‌تواند بخواند."), 12, Neo.RED)
 
     val friend = Neo.input(a, tr("friend's key (64 hex characters)", "کلید دوستم (۶۴ نویسه‌ی hex)")).apply {
         inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
@@ -195,40 +183,9 @@ fun showAddContact(a: OnlineBase, ex: Contact?, done: () -> Unit) {
     frow.addView(Icons.button(a, "scan", Neo.ACCENT) { a.scanKey { friend.setText(it) } })
     frow.addView(Icons.button(a, "file", Neo.ACCENT) { a.pickKeyFile { friend.setText(it) } })
 
-    val pass = Neo.input(a, tr("shared passphrase (words)", "عبارت مشترک (کلمات)")).apply {
-        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-        minLines = 2
-    }
-    val salt = Neo.input(a, tr("shared salt (32 hex characters)", "salt مشترک (۳۲ نویسه‌ی hex)"))
-    val importShared = Neo.button(a, tr("Import passphrase + salt (QR / file / paste)", "وارد کردن عبارت و salt (QR / فایل / paste)"))
-    importShared.setOnClickListener {
-        a.importRaw(tr("Passphrase + salt", "عبارت و salt")) { raw ->
-            val pr = SharedSecret.parse(raw)
-            if (pr == null) {
-                Toast.makeText(a, tr("This is not a passphrase + salt", "این عبارت و salt نیست"), Toast.LENGTH_SHORT).show()
-            } else {
-                pass.setText(pr.first)
-                salt.setText(pr.second)
-            }
-        }
-    }
-
-    val fireBox = Neo.vertical(a)
-    Neo.add(fireBox, Neo.text(a, tr("AES key = HKDF( my key + friend's key + passphrase, salt ). Nothing here is sent anywhere.",
-        "کلید AES = HKDF( کلید من + کلید دوستم + عبارت، salt ). هیچ‌کدام از این‌ها فرستاده نمی‌شود."), 11, Neo.DIM))
-    Neo.add(fireBox, frow, 8)
-    Neo.add(fireBox, importShared, 8)
-    Neo.add(fireBox, pass, 8)
-    Neo.add(fireBox, salt, 8)
-    if (ex != null) {
-        Neo.add(fireBox, Neo.text(a, tr("Leave these empty to keep the current session key.",
-            "برای نگه‌داشتن کلید جلسه‌ی فعلی خالی بگذارید."), 11, Neo.DIM), 6)
-    }
-
-    // friend's server address (optional)
     val curSrv = if (ex != null) Online.contactServer(a, ex.id) else null
     val srv = Neo.input(a, if (curSrv != null) tr("current: ", "فعلی: ") + Online.host(curSrv.u)
-                           else tr("friend's server address (optional)", "آدرس سرور دوستم (اختیاری)"))
+                           else tr("friend's server address (optional, online)", "آدرس سرور دوستم (اختیاری، برای آنلاین)"))
     val srow = LinearLayout(a).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
@@ -241,21 +198,21 @@ fun showAddContact(a: OnlineBase, ex: Contact?, done: () -> Unit) {
         }
     })
 
-    Neo.add(col, name)
+    Neo.add(col, first)
+    Neo.add(col, last, 8)
     Neo.add(col, phone, 8)
-    Neo.add(col, fire, 14)
-    Neo.add(col, plainNote, 6)
-    Neo.add(col, fireBox, 6)
-    Neo.add(col, Neo.text(a, tr("Online: leave empty to use my server.", "آنلاین: خالی بگذار تا از سرور من استفاده شود."), 11, Neo.DIM), 14)
-    Neo.add(col, srow, 4)
-
-    fun refresh() {
-        fireBox.visibility = if (fire.isChecked) View.VISIBLE else View.GONE
-        plainNote.visibility = if (fire.isChecked) View.GONE else View.VISIBLE
+    Neo.add(col, frow, 8)
+    if (ex != null) {
+        Neo.add(col, Neo.text(a, tr("Leave the key empty to keep the current one.", "برای نگه‌داشتن کلید فعلی، کلید را خالی بگذار."), 11, Neo.DIM), 4)
     }
-    fire.setOnCheckedChangeListener { _, _ -> refresh() }
-    if (ex != null) { name.setText(ex.name); phone.setText(ex.phone); fire.isChecked = ex.level == 1 }
-    refresh()
+    Neo.add(col, srow, 8)
+
+    if (ex != null) {
+        val i = ex.name.indexOf(' ')
+        first.setText(if (i < 0) ex.name else ex.name.substring(0, i))
+        last.setText(if (i < 0) "" else ex.name.substring(i + 1))
+        phone.setText(ex.phone)
+    }
 
     val d = Neo.dialog(a)
         .setTitle(if (ex == null) tr("New contact", "مخاطب جدید") else tr("Edit contact", "ویرایش مخاطب"))
@@ -268,45 +225,41 @@ fun showAddContact(a: OnlineBase, ex: Contact?, done: () -> Unit) {
     fun t(s: String) { Toast.makeText(a, s, Toast.LENGTH_SHORT).show() }
 
     d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { btn ->
-        val n = name.text.toString().trim()
+        val fn = first.text.toString().trim()
+        val ln = last.text.toString().trim()
+        val n = (fn + " " + ln).trim()
         val ph = phone.text.toString().trim()
-        val isFire = fire.isChecked
-        val f = friend.text.toString().trim()
-        val ps = pass.text.toString().trim()
-        val sl = salt.text.toString().trim()
+        val fkRaw = friend.text.toString().trim()
         val st = srv.text.toString().trim()
         val srvInfo = if (st.isEmpty()) null else OnlineParse.server(st)
-        val any = f.isNotEmpty() || ps.isNotEmpty() || sl.isNotEmpty()
-        val all = f.isNotEmpty() && ps.isNotEmpty() && sl.isNotEmpty()
+        val fk = if (fkRaw.isEmpty()) null else parseFriendKey(fkRaw)
 
-        if (n.isEmpty() || ph.isEmpty()) { t(tr("name and number required", "نام و شماره لازم است")); return@setOnClickListener }
-        if (st.isNotEmpty() && srvInfo == null) {
-            t(tr("This is not a server address", "این آدرس سرور نیست"))
+        if (fn.isEmpty() || ph.isEmpty()) { t(tr("first name and phone number are required", "نام و شماره‌ی موبایل لازم است")); return@setOnClickListener }
+        if (Phones.tail(ph).length < 6) { t(tr("Enter a valid phone number", "یک شماره‌ی معتبر وارد کن")); return@setOnClickListener }
+        if (st.isNotEmpty() && srvInfo == null) { t(tr("This is not a server address", "این آدرس سرور نیست")); return@setOnClickListener }
+        if (fkRaw.isNotEmpty() && fk == null) { t(tr("The friend's key must be 64 hex characters", "کلید دوستم باید ۶۴ نویسه‌ی hex باشد")); return@setOnClickListener }
+        if (ex == null && fk == null) { t(tr("The friend's key is required", "کلید دوستم لازم است")); return@setOnClickListener }
+        if (fk != null && Vault.myKeyHex(a) == null) {
+            t(tr("Create your own key first (My key page)", "اول کلید خودت را بساز (صفحه‌ی کلید من)"))
             return@setOnClickListener
         }
-        if (isFire && ((ex == null && !all) || (any && !all))) {
-            t(tr("Fill in the friend's key, the passphrase and the salt", "کلید دوستم، عبارت و salt را کامل وارد کن"))
-            return@setOnClickListener
-        }
 
-        val level = if (isFire) 1 else 0
         val id: Long
         val ok: Boolean
         if (ex == null) {
-            id = Contacts.insert(a, Contact(0, n, ph, level, 0))
+            id = Contacts.insert(a, Contact(0, n, ph, 1, 0))
             ok = id > 0
         } else {
             id = ex.id
-            ok = Contacts.update(a, Contact(ex.id, n, ph, level, ex.createdAt))
+            ok = Contacts.update(a, Contact(ex.id, n, ph, 1, ex.createdAt))
         }
         if (!ok) { t(tr("number already exists", "این شماره قبلاً ثبت شده")); return@setOnClickListener }
         if (srvInfo != null) Online.setContactServer(a, id, srvInfo)
 
-        if (!(isFire && all)) { d.dismiss(); done(); return@setOnClickListener }
+        if (fk == null) { d.dismiss(); done(); return@setOnClickListener }
 
         btn.isEnabled = false
-        t(tr("Deriving the key (a few seconds)…", "در حال ساخت کلید (چند ثانیه)…"))
-        deriveAndStore(a, id, f, ps, sl) { fp, err ->
+        deriveAndStore(a, id, fk) { fp, err ->
             d.dismiss()
             done()
             if (err != null) {
