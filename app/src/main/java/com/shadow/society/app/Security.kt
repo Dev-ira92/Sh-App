@@ -6,17 +6,13 @@ import android.security.keystore.KeyProperties
 import android.util.Base64
 import androidx.core.app.NotificationManagerCompat
 import org.bouncycastle.crypto.digests.SHA256Digest
-import org.bouncycastle.crypto.generators.Argon2BytesGenerator
 import org.bouncycastle.crypto.generators.HKDFBytesGenerator
 import org.bouncycastle.crypto.generators.SCrypt
-import org.bouncycastle.crypto.params.Argon2Parameters
 import org.bouncycastle.crypto.params.HKDFParameters
-import org.json.JSONObject
 import java.security.GeneralSecurityException
 import java.security.KeyStore
 import java.security.MessageDigest
 import java.security.SecureRandom
-import java.text.Normalizer
 import java.util.Locale
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -24,8 +20,6 @@ import javax.crypto.Mac
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
-import kotlin.math.ceil
-import kotlin.math.ln
 
 const val GENERIC_DECRYPT_ERROR = "رمزگشایی ناموفق"
 
@@ -34,8 +28,7 @@ class DecryptException : GeneralSecurityException(GENERIC_DECRYPT_ERROR)
 
 /**
  * AES-256-GCM, random 12-byte IV per message.
- * A "session key" blob is 32 bytes (key) or 48 bytes (key + 16-byte salt; the salt is bound into the
- * authentication data, exactly like the Python reference).
+ * A "session key" blob is 48 bytes: key (32) + salt (16). The salt is bound into the authentication data.
  */
 object Crypto {
     private val rng = SecureRandom()
@@ -97,30 +90,13 @@ object Crypto {
 }
 
 /**
- * Session key = HKDF-SHA256( sorted([keyA, keyB]) + Argon2id(passphrase, salt), salt, info = "v1" ).
- * Same standard as the Python reference (t=3, 64 MB, 4 lanes). Result: 48 bytes = key(32) + salt(16).
+ * Session key from the two personal keys only (same as shadow_crypto.derive_pair_key in the Python reference):
+ *   salt = SHA-256("shadow/pair-salt" + sorted keys)[:16]
+ *   key  = HKDF-SHA256(sorted keys, salt, info = "v1")
+ * Result: 48 bytes = key (32) + salt (16). Order of the two keys does not matter.
  */
 object SessionCrypto {
-    const val ITER = 3
-    const val MEM_KB = 64 * 1024
-    const val LANES = 4
     private val INFO = "v1".toByteArray()
-
-    fun normalize(t: String): String {
-        var s = Normalizer.normalize(t, Normalizer.Form.NFKC)
-        s = s.replace('\u064a', '\u06cc').replace('\u0643', '\u06a9').replace("\u200c", "").replace("\u200d", "")
-        return s.lowercase(Locale.ROOT).trim().split(Regex("\\s+")).filter { it.isNotEmpty() }.joinToString(" ")
-    }
-
-    fun stretch(pass: String, salt: ByteArray, iter: Int = ITER, memKb: Int = MEM_KB, lanes: Int = LANES): ByteArray {
-        val p = Argon2Parameters.Builder(Argon2Parameters.ARGON2_id)
-            .withSalt(salt).withIterations(iter).withMemoryAsKB(memKb).withParallelism(lanes).build()
-        val g = Argon2BytesGenerator()
-        g.init(p)
-        val out = ByteArray(32)
-        g.generateBytes(normalize(pass).toByteArray(Charsets.UTF_8), out)
-        return out
-    }
 
     private fun cmp(a: ByteArray, b: ByteArray): Int {
         for (i in a.indices) {
@@ -131,14 +107,14 @@ object SessionCrypto {
         return 0
     }
 
-    fun derive(keyA: ByteArray, keyB: ByteArray, pass: String, salt: ByteArray,
-               iter: Int = ITER, memKb: Int = MEM_KB, lanes: Int = LANES): ByteArray {
-        require(keyA.size == 32 && keyB.size == 32 && salt.size == 16)
-        val first = if (cmp(keyA, keyB) <= 0) keyA else keyB
-        val second = if (cmp(keyA, keyB) <= 0) keyB else keyA
-        val ikm = first + second + stretch(pass, salt, iter, memKb, lanes)
+    fun derive(keyA: ByteArray, keyB: ByteArray): ByteArray {
+        require(keyA.size == 32 && keyB.size == 32)
+        val c = cmp(keyA, keyB)
+        val first = if (c <= 0) keyA else keyB
+        val second = if (c <= 0) keyB else keyA
+        val salt = Crypto.sha256("shadow/pair-salt".toByteArray() + first + second).copyOfRange(0, 16)
         val gen = HKDFBytesGenerator(SHA256Digest())
-        gen.init(HKDFParameters(ikm, salt, INFO))
+        gen.init(HKDFParameters(first + second, salt, INFO))
         val out = ByteArray(32)
         gen.generateBytes(out, 0, 32)
         return out + salt
@@ -154,95 +130,13 @@ object SessionCrypto {
     fun selfTest(): Boolean {
         val a = ByteArray(32) { it.toByte() }
         val b = ByteArray(32) { (it + 32).toByte() }
-        val salt = ByteArray(16) { it.toByte() }
-        val pw = "alpha  Beta   gamma delta epsilon zeta eta theta"
-        val blob = derive(a, b, pw, salt)
-        if (Crypto.hex(blob.copyOfRange(0, 32)) != "cd03fbb61dd60f4f1e98a6aaa02e2beb856156f436214635f6467c1fd8698df4") return false
-        if (Crypto.hex(derive(b, a, pw, salt)) != Crypto.hex(blob)) return false
-        val fromPython = Crypto.unhex("6465666768696a6b6c6d6e6fea37ed639397784b1fe65a287afa92ef4bad8c3b6a")
+        val blob = derive(a, b)
+        if (Crypto.hex(blob.copyOfRange(0, 32)) != "e04debdc4806d5ad9931221bb66807421fc7f06e7af1ae6eee35dd84b77fcc29") return false
+        if (Crypto.hex(blob.copyOfRange(32, 48)) != "c94894cae1445756b0a9071052e68664") return false
+        if (Crypto.hex(derive(b, a)) != Crypto.hex(blob)) return false
+        val fromPython = Crypto.unhex("6465666768696a6b6c6d6e6f320e302dc99961881c59f827a1b73e518f3cbc45bc")
         val plain = try { String(Crypto.decrypt(blob, fromPython)) } catch (e: Exception) { return false }
-        if (plain != "hello") return false
-        return normalize("  \u064a\u200c\u0643   \u06a9\u0644\u0645\u0647   HELLO ") == "\u06cc\u06a9 \u06a9\u0644\u0645\u0647 hello"
-    }
-}
-
-/** Diceware-style passphrase. Uses assets/wordlist_en.txt + wordlist_fa.txt if you add them, plus a built-in list. */
-object Diceware {
-    private val rng = SecureRandom()
-    private const val MIN_BITS = 100.0
-
-    private val BUILTIN = listOf(
-        "amber", "anchor", "arrow", "atlas", "badge", "basil", "beacon", "birch", "blade", "bridge", "cabin", "candle",
-        "canyon", "cedar", "cliff", "cobalt", "comet", "coral", "crater", "dagger", "delta", "ember", "falcon", "fjord",
-        "flint", "forest", "garnet", "glacier", "harbor", "hazel", "indigo", "island", "jungle", "kernel", "lagoon",
-        "lantern", "marble", "meadow", "nectar", "oasis", "orbit", "pebble", "quartz", "raven", "saddle", "thunder",
-        "umber", "valley", "willow", "zephyr", "acorn", "bamboo", "breeze", "canvas", "cinder", "clover", "copper",
-        "dune", "eagle", "ferry", "granite", "hammer", "iron", "jasper", "kettle", "lotus", "maple", "noble", "olive",
-        "pearl", "quiver", "ridge", "silver", "tundra", "velvet", "walnut", "yarrow", "zenith", "anvil", "bronze",
-        "cipher", "drift", "echo", "flame", "grove", "haven", "ivory", "jade", "knight", "ledger", "mirror", "north",
-        "onyx", "prism", "quill", "river", "shadow", "timber", "unity", "vortex", "wander",
-        "آب", "آسمان", "ابر", "اسب", "انار", "باد", "باران", "بلبل", "پرنده", "پنجره", "تابستان", "ترازو", "جنگل",
-        "چراغ", "چشمه", "حوض", "خورشید", "دریا", "درخت", "دشت", "رود", "ستاره", "سنگ", "شمع", "شاهین", "صبح",
-        "طوفان", "عقاب", "غروب", "فانوس", "قلعه", "کوه", "کتاب", "گل", "گندم", "ماه", "مهتاب", "نسیم", "نقره",
-        "هلال", "یاقوت", "زمرد", "زمستان", "بهار", "پاییز", "آتش", "برف", "تندر", "دره", "سبد", "شب", "قایق",
-        "کاروان", "گنج", "لاله", "نیلوفر", "آهو", "پروانه", "تاک", "جویبار", "چنار", "خرمن", "دیوار", "زنبق",
-        "سیب", "شقایق", "صدف", "عسل", "فرش", "قطره", "گردو", "لیمو", "مروارید", "نان", "هسته", "یخ", "ابریشم",
-        "بادام", "پله", "تپه", "جاده", "چتر", "حلزون", "خاک", "دف", "رعد", "زیتون", "سفال", "شیشه", "طلا", "کلید",
-        "گلدان", "ماهی", "نعنا", "همای")
-
-    private fun fromAssets(c: Context, name: String): List<String> = try {
-        c.assets.open(name).bufferedReader().readLines().mapNotNull {
-            val t = it.trim()
-            if (t.isEmpty() || t.startsWith("#")) null else SessionCrypto.normalize(t.split(Regex("\\s+")).last())
-        }
-    } catch (e: Exception) { emptyList() }
-
-    fun words(c: Context): List<String> =
-        (fromAssets(c, "wordlist_en.txt") + fromAssets(c, "wordlist_fa.txt") + BUILTIN.map { SessionCrypto.normalize(it) }).distinct()
-
-    /** At least 8 words; more if the list is small, so the entropy stays at 100 bits or more. */
-    fun generate(c: Context): String {
-        val w = words(c)
-        val bits = ln(w.size.toDouble()) / ln(2.0)
-        val count = maxOf(8, ceil(MIN_BITS / bits).toInt())
-        return (0 until count).joinToString(" ") { w[rng.nextInt(w.size)] }
-    }
-}
-
-/** The shared passphrase + salt that one of you creates and hands to the other. */
-object SharedSecret {
-    fun generate(c: Context): Pair<String, String> = Pair(Diceware.generate(c), Crypto.hex(Crypto.random(16)))
-
-    fun toLine(pass: String, salt: String): String = "SHADOWPAIR1|" + SessionCrypto.normalize(pass) + "|" + salt
-
-    fun toJson(pass: String, salt: String): String = JSONObject().put("app", "Shadow").put("type", "shared")
-        .put("v", 1).put("pass", SessionCrypto.normalize(pass)).put("salt", salt).toString(2)
-
-    /** Accepts the JSON file or the "SHADOWPAIR1|words|salt" line. Returns (passphrase, salt). */
-    fun parse(text: String): Pair<String, String>? {
-        val t = text.trim()
-        var pass: String? = null
-        var salt: String? = null
-        if (t.startsWith("{")) {
-            try {
-                val j = JSONObject(t)
-                if (j.optString("type") != "shared") return null
-                pass = j.optString("pass")
-                salt = j.optString("salt")
-            } catch (e: Exception) { return null }
-        } else {
-            for (l in t.lines()) {
-                val x = l.trim()
-                if (x.startsWith("SHADOWPAIR1|")) {
-                    val p = x.split("|")
-                    if (p.size == 3) { pass = p[1]; salt = p[2] }
-                    break
-                }
-            }
-        }
-        val s = salt?.lowercase() ?: return null
-        if (pass.isNullOrBlank() || !Regex("[0-9a-f]{32}").matches(s)) return null
-        return Pair(pass, s)
+        return plain == "hello"
     }
 }
 
@@ -340,7 +234,7 @@ object SessionVault {
                 continue
             }
             val bytes = try { Crypto.unhex(p[0]) } catch (e: Exception) { continue }
-            if (bytes.size != 32 && bytes.size != 48) continue
+            if (bytes.size != 48) continue   // keys of the old method are ignored
             synchronized(this) { if (!keys.containsKey(id)) keys[id] = Entry(bytes, exp) }
         }
     }
