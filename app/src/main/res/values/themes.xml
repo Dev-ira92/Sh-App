@@ -1,37 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.ShSo" parent="Theme.AppCompat.NoActionBar">
-        <item name="colorPrimary">#000000</item>
-        <item name="colorPrimaryDark">#000000</item>
-        <item name="colorAccent">#00FF41</item>
-        <item name="android:windowBackground">#000000</item>
+    <style name="Theme.ShSo" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="colorPrimary">#4169E1</item>
+        <item name="colorPrimaryDark">#385AC2</item>
+        <item name="colorAccent">#4169E1</item>
+        <item name="android:windowBackground">#F2F5FB</item>
+        <item name="alertDialogTheme">@style/Alert.Royal</item>
     </style>
 
-    <style name="Alert.Matrix" parent="Theme.AppCompat.Dialog.Alert">
-        <item name="android:windowBackground">#E60A0F0A</item>
-        <item name="android:textColorPrimary">#00FF41</item>
-        <item name="android:textColorSecondary">#008F11</item>
-        <item name="colorAccent">#00FF41</item>
-    </style>
-
-    <style name="Alert.Telegram" parent="Theme.AppCompat.Dialog.Alert">
-        <item name="android:windowBackground">#17212B</item>
-        <item name="android:textColorPrimary">#FFFFFF</item>
-        <item name="android:textColorSecondary">#7F91A4</item>
-        <item name="colorAccent">#5EB5F7</item>
-    </style>
-
-    <style name="Alert.WhatsApp" parent="Theme.AppCompat.Light.Dialog.Alert">
-        <item name="android:windowBackground">#FFFFFF</item>
-        <item name="android:textColorPrimary">#111B21</item>
-        <item name="android:textColorSecondary">#667781</item>
-        <item name="colorAccent">#128C7E</item>
-    </style>
-
-    <style name="Alert.Sms" parent="Theme.AppCompat.Light.Dialog.Alert">
-        <item name="android:windowBackground">#FFFFFF</item>
-        <item name="android:textColorPrimary">#202124</item>
-        <item name="android:textColorSecondary">#5F6368</item>
-        <item name="colorAccent">#1A73E8</item>
+    <style name="Alert.Royal" parent="Theme.AppCompat.Light.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/dlg_royal</item>
+        <item name="android:textColorPrimary">#2D2D33</item>
+        <item name="android:textColorSecondary">#6F6E6E</item>
+        <item name="colorAccent">#4169E1</item>
     </style>
 </resources>
