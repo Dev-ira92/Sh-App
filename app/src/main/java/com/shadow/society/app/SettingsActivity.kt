@@ -36,7 +36,7 @@ class SettingsActivity : BaseActivity() {
     }
 
     private fun cardTitle(card: LinearLayout, s: String) {
-        card.addView(Neo.text(this, s, 15, Neo.TEXT).apply { typeface = Neo.BOLD })
+        card.addView(Neo.text(this, s, 11, Neo.ACCENT).apply { typeface = Neo.BOLD })
     }
 
     private fun langName(): String =
@@ -52,11 +52,11 @@ class SettingsActivity : BaseActivity() {
         bar.orientation = LinearLayout.HORIZONTAL
         bar.gravity = Gravity.CENTER_VERTICAL
         bar.setBackgroundColor(Neo.PANEL)
-        bar.elevation = Neo.dp(this, 6).toFloat()
+        bar.elevation = Neo.dp(this, 3).toFloat()
         val bp = Neo.dp(this, 4)
         bar.setPadding(bp, bp, bp, bp)
         bar.addView(Icons.button(this, "back", Neo.BARTEXT) { finish() })
-        val title = Neo.glow(Neo.text(this, tr("Settings", "تنظیمات"), 18, Neo.BARTEXT))
+        val title = Neo.text(this, tr("Settings", "تنظیمات"), 12, Neo.BARTEXT)
         title.typeface = Neo.BOLD
         bar.addView(title)
         outer.addView(bar)
@@ -71,14 +71,7 @@ class SettingsActivity : BaseActivity() {
         // ---- Look ----
         val look = Neo.card(this)
         cardTitle(look, tr("Look", "ظاهر"))
-        btn(look, tr("Theme: ", "تم: ") + Neo.themeName(Neo.P), 10) {
-            val labels = Array(THEMES.size) { Neo.themeName(THEMES[it]) }
-            Dialogs.choose(this, tr("Theme", "تم"), labels, THEMES.indexOf(Neo.P)) { w ->
-                Prefs.putStr(this, "theme", THEMES[w].id)
-                applyAndRebuild()   // the Matrix rain turns on by itself with the Matrix theme
-            }
-        }
-        btn(look, tr("Language: ", "زبان: ") + langName(), 8) {
+        btn(look, tr("Language: ", "زبان: ") + langName(), 10) {
             val labels = arrayOf(tr("System default", "زبان سیستم"), "فارسی", "English")
             Dialogs.choose(this, tr("Language", "زبان"), labels, -1) { w ->
                 if (w == 0) {
@@ -119,7 +112,7 @@ class SettingsActivity : BaseActivity() {
         // ---- Online ----
         val on = Neo.card(this)
         cardTitle(on, tr("Online", "آنلاین"))
-        onlineInfo = Neo.text(this, "", 12, Neo.DIM)
+        onlineInfo = Neo.text(this, "", 9, Neo.DIM)
         Neo.add(on, onlineInfo, 6)
         val open = Neo.primary(this, tr("Online settings", "تنظیمات آنلاین"))
         Neo.add(on, open, 10)
