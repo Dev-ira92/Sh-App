@@ -18,6 +18,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.StateListDrawable
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
@@ -52,35 +53,21 @@ class Palette(
     val mono: Boolean, val rain: Boolean, val dialog: Int
 )
 
+/** The one and only look (royal blue, white cards). */
 val THEMES: List<Palette> = listOf(
-    Palette(id = "matrix", fa = "ماتریکس", en = "Matrix",
-        bg = h(0xFF000000), panel = h(0xCC0B0F0B), barText = h(0xFF00FF41), text = h(0xFF00FF41), dim = h(0xFF008F11),
-        accent = h(0xFF00FF41), onAccent = h(0xFF000000),
-        sent = h(0xFF00FF41), sentText = h(0xFF000000), recv = h(0xE6031A06), recvText = h(0xFF00FF41),
-        red = h(0xFFFF3B3B), mono = true, rain = true, dialog = R.style.Alert_Matrix),
-    Palette(id = "telegram", fa = "تلگرام", en = "Telegram",
-        bg = h(0xFF0E1621), panel = h(0xFF17212B), barText = h(0xFFFFFFFF), text = h(0xFFFFFFFF), dim = h(0xFF7F91A4),
-        accent = h(0xFF5EB5F7), onAccent = h(0xFFFFFFFF),
-        sent = h(0xFF2B5278), sentText = h(0xFFFFFFFF), recv = h(0xFF182533), recvText = h(0xFFFFFFFF),
-        red = h(0xFFEC3942), mono = false, rain = false, dialog = R.style.Alert_Telegram),
-    Palette(id = "whatsapp", fa = "واتساپ", en = "WhatsApp",
-        bg = h(0xFFECE5DD), panel = h(0xFF075E54), barText = h(0xFFFFFFFF), text = h(0xFF111B21), dim = h(0xFF667781),
-        accent = h(0xFF128C7E), onAccent = h(0xFFFFFFFF),
-        sent = h(0xFFDCF8C6), sentText = h(0xFF111B21), recv = h(0xFFFFFFFF), recvText = h(0xFF111B21),
-        red = h(0xFFD32F2F), mono = false, rain = false, dialog = R.style.Alert_WhatsApp),
-    Palette(id = "sms", fa = "پیامک موبایل", en = "Mobile SMS",
-        bg = h(0xFFFFFFFF), panel = h(0xFFF1F3F4), barText = h(0xFF202124), text = h(0xFF202124), dim = h(0xFF5F6368),
-        accent = h(0xFF1A73E8), onAccent = h(0xFFFFFFFF),
-        sent = h(0xFF1A73E8), sentText = h(0xFFFFFFFF), recv = h(0xFFE8EAED), recvText = h(0xFF202124),
-        red = h(0xFFD93025), mono = false, rain = false, dialog = R.style.Alert_Sms)
+    Palette(id = "royal", fa = "آبی سلطنتی", en = "Royal blue",
+        bg = h(0xFFF2F5FB), panel = h(0xFFFFFFFF), barText = h(0xFF4169E1), text = h(0xFF2D2D33), dim = h(0xD1585757),
+        accent = h(0xFF4169E1), onAccent = h(0xFFFFFFFF),
+        sent = h(0xFF4169E1), sentText = h(0xFFFFFFFF), recv = h(0xFFFFFFFF), recvText = h(0xFF2D2D33),
+        red = h(0xFFD93025), mono = false, rain = false, dialog = R.style.Alert_Royal)
 )
 
-/** Theme + sizes (changeable in Settings) + view factories with a soft "raised" look (gradients, shadows). */
+/** Look + sizes + view factories. Flat, rounded, royal-blue (based on the Uiverse sign-up form). */
 object Neo {
     var P: Palette = THEMES[0]
-    var fs = 1.5f        // font scale
-    var isz = 1.5f       // icon scale
-    var rain = true
+    var fs = 1.5f        // font scale (Settings)
+    var isz = 1.5f       // icon scale (Settings)
+    var rain = false
     var version = 0      // bumped when settings change, screens rebuild themselves
 
     val BG: Int get() = P.bg
@@ -90,16 +77,20 @@ object Neo {
     val DIM: Int get() = P.dim
     val ACCENT: Int get() = P.accent
     val RED: Int get() = P.red
-    val FONT: Typeface get() = if (P.mono) Typeface.MONOSPACE else Typeface.DEFAULT
-    val BOLD: Typeface get() = Typeface.create(FONT, Typeface.BOLD)
+    val FONT: Typeface get() = Typeface.DEFAULT
+    val BOLD: Typeface get() = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+
+    val BORDER = 0x65696969          // rgba(105,105,105,0.4)
+    val HOVER = 0xFF385AC2.toInt()   // rgb(56,90,194)
+    val GREEN = 0xFF008000.toInt()
+    val LABEL = 0xFF808080.toInt()
+    val SOFT = 0xFFE8EAF9.toInt().let { 0xFFE8EDFB.toInt() }
 
     fun load(c: Context) {
         Lang.code = Prefs.str(c, "lang") ?: "fa"
-        val id = Prefs.str(c, "theme")
-        P = THEMES.firstOrNull { it.id == id } ?: THEMES[0]
+        P = THEMES[0]
         fs = Prefs.int(c, "font_pct", 150) / 100f
         isz = Prefs.int(c, "icon_pct", 150) / 100f
-        rain = Prefs.int(c, "rain", 1) == 1
     }
 
     fun changed(c: Context) { load(c); version++ }
@@ -118,11 +109,7 @@ object Neo {
         textDirection = View.TEXT_DIRECTION_FIRST_STRONG
     }
 
-    /** Neon glow for titles (Matrix theme only). */
-    fun glow(t: TextView): TextView {
-        if (P.rain) t.setShadowLayer(14f, 0f, 0f, ACCENT)
-        return t
-    }
+    fun glow(t: TextView): TextView = t
 
     fun box(c: Context, fill: Int, stroke: Int, r: Int): GradientDrawable = GradientDrawable().apply {
         setColor(fill)
@@ -130,79 +117,62 @@ object Neo {
         cornerRadius = dp(c, r).toFloat()
     }
 
-    /** Dark-glass button background: light on top, darker at the bottom. */
-    fun glass(c: Context, r: Int = 12, stroke: Int = withAlpha(ACCENT, 200)): GradientDrawable {
-        val top = ColorUtils.blendARGB(P.recv, Color.WHITE, 0.14f)
-        val bot = ColorUtils.blendARGB(P.recv, Color.BLACK, 0.24f)
-        return GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(top, bot)).apply {
-            cornerRadius = dp(c, r).toFloat()
-            setStroke(dp(c, 1), stroke)
-        }
+    private fun states(normal: Drawable, pressed: Drawable): StateListDrawable = StateListDrawable().apply {
+        addState(intArrayOf(android.R.attr.state_pressed), pressed)
+        addState(intArrayOf(), normal)
     }
 
-    /** Accent-coloured raised button background. */
-    fun raised(c: Context, r: Int = 12): GradientDrawable {
-        val top = ColorUtils.blendARGB(ACCENT, Color.WHITE, 0.25f)
-        val bot = ColorUtils.blendARGB(ACCENT, Color.BLACK, 0.28f)
-        return GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(top, bot)).apply {
-            cornerRadius = dp(c, r).toFloat()
-            setStroke(dp(c, 1), withAlpha(Color.WHITE, 90))
-        }
+    /** White button background with a light border. */
+    fun glass(c: Context, r: Int = 12, stroke: Int = BORDER): GradientDrawable = box(c, Color.WHITE, stroke, r)
+
+    /** Solid royal-blue background. */
+    fun raised(c: Context, r: Int = 12): GradientDrawable = GradientDrawable().apply {
+        setColor(ACCENT)
+        cornerRadius = dp(c, r).toFloat()
     }
 
-    /** A rounded panel with a soft shadow, for grouping controls. */
+    /** White panel with big rounded corners (the form card). */
     fun card(c: Context): LinearLayout = LinearLayout(c).apply {
         orientation = LinearLayout.VERTICAL
-        val top = withAlpha(ColorUtils.blendARGB(P.recv, Color.WHITE, 0.07f), 238)
-        val bot = withAlpha(ColorUtils.blendARGB(P.recv, Color.BLACK, 0.22f), 238)
-        background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(top, bot)).apply {
-            cornerRadius = dp(c, 16).toFloat()
-            setStroke(dp(c, 1), withAlpha(DIM, 130))
-        }
-        elevation = dp(c, 3).toFloat()
-        val p = dp(c, 14)
+        background = box(c, Color.WHITE, 0x14000000, 20)
+        elevation = dp(c, 2).toFloat()
+        val p = dp(c, 20)
         setPadding(p, p, p, p)
     }
 
-    /** Chat bubble with a real tail and a soft gradient; Matrix gets a neon outline on the friend's side. */
+    /** Chat bubble with a small tail. */
     fun bubble(c: Context, sent: Boolean): Drawable {
         val base = if (sent) P.sent else P.recv
         val c1 = ColorUtils.blendARGB(base, Color.WHITE, 0.10f)
-        val c2 = ColorUtils.blendARGB(base, Color.BLACK, 0.18f)
-        val stroke = if (P.rain && !sent) P.accent else 0
-        return BubbleDrawable(c1, c2, stroke, sent, dp(c, 16).toFloat(), dp(c, 7).toFloat())
+        val c2 = ColorUtils.blendARGB(base, Color.BLACK, 0.12f)
+        return BubbleDrawable(c1, c2, 0, sent, dp(c, 16).toFloat(), dp(c, 7).toFloat())
     }
 
-    /** Round avatar: neon ring in Matrix, otherwise a colour gradient picked from the name. */
+    /** Round avatar with a colour picked from the name. */
     fun avatar(c: Context, name: String): TextView {
         val letter = name.trim().take(1).uppercase()
-        val tv = text(c, letter, 18, if (P.rain) ACCENT else Color.WHITE)
+        val tv = text(c, letter, 18, Color.WHITE)
         tv.gravity = Gravity.CENTER
         tv.typeface = BOLD
         val g = GradientDrawable()
         g.shape = GradientDrawable.OVAL
-        if (P.rain) {
-            g.setColor(P.recv)
-            g.setStroke(dp(c, 2), ACCENT)
-        } else {
-            val hue = (((name.hashCode() % 360) + 360) % 360).toFloat()
-            g.orientation = GradientDrawable.Orientation.TL_BR
-            g.colors = intArrayOf(
-                Color.HSVToColor(floatArrayOf(hue, 0.55f, 0.95f)),
-                Color.HSVToColor(floatArrayOf((hue + 40f) % 360f, 0.70f, 0.70f)))
-        }
+        val hue = (((name.hashCode() % 360) + 360) % 360).toFloat()
+        g.orientation = GradientDrawable.Orientation.TL_BR
+        g.colors = intArrayOf(
+            Color.HSVToColor(floatArrayOf(hue, 0.55f, 0.95f)),
+            Color.HSVToColor(floatArrayOf((hue + 40f) % 360f, 0.70f, 0.70f)))
         tv.background = g
-        tv.elevation = dp(c, 3).toFloat()
         return tv
     }
 
+    /** Plain input (dialogs). The sign-up form uses FloatField instead. */
     fun input(c: Context, hint: String): EditText = EditText(c).apply {
         this.hint = hint
-        setHintTextColor(DIM)
+        setHintTextColor(LABEL)
         setTextColor(P.recvText)
         typeface = FONT
         textSize = 15 * fs
-        background = box(c, P.recv, DIM, 10)
+        background = box(c, Color.WHITE, BORDER, 10)
         val p = dp(c, 10)
         setPadding(p, p, p, p)
         textDirection = View.TEXT_DIRECTION_FIRST_STRONG
@@ -210,24 +180,31 @@ object Neo {
         inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
     }
 
+    /** Secondary button: white with a light border, blue text. */
     fun button(c: Context, label: String): Button = Button(c).apply {
         text = label
         isAllCaps = false
         textSize = 14 * fs
         setTextColor(ACCENT)
         typeface = BOLD
-        background = glass(c)
-        elevation = dp(c, 4).toFloat()
+        background = states(box(c, Color.WHITE, BORDER, 10), box(c, SOFT, ACCENT, 10))
+        stateListAnimator = null
+        elevation = 0f
+        val v = dp(c, 10)
+        setPadding(v, v, v, v)
+        minHeight = 0
+        minimumHeight = 0
     }
 
+    /** Main button: royal blue, darker while pressed. */
     fun primary(c: Context, label: String): Button = button(c, label).apply {
         setTextColor(P.onAccent)
-        background = raised(c)
+        background = states(raised(c, 10), box(c, HOVER, HOVER, 10))
     }
 
     fun danger(c: Context, label: String): Button = button(c, label).apply {
         setTextColor(RED)
-        background = glass(c, 12, RED)
+        background = states(glass(c, 10, RED), box(c, 0xFFFDECEA.toInt(), RED, 10))
     }
 
     fun vertical(c: Context): LinearLayout = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
@@ -244,21 +221,16 @@ object Neo {
 
     fun copy(c: Context, s: String) {
         (c.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
-            .setPrimaryClip(ClipData.newPlainText("Sh-So", s))
+            .setPrimaryClip(ClipData.newPlainText("Shadow", s))
         Toast.makeText(c, tr("Copied", "کپی شد"), Toast.LENGTH_SHORT).show()
     }
 
     fun dialog(c: Context): AlertDialog.Builder = AlertDialog.Builder(c, P.dialog)
 
-    /** Page background; Matrix theme gets the falling code behind everything. */
-    fun backdrop(c: Context, content: View, rainAlpha: Float = 0.6f): View {
+    /** Page background. */
+    fun backdrop(c: Context, content: View, rainAlpha: Float = 0f): View {
         val f = FrameLayout(c)
         f.setBackgroundColor(BG)
-        if (P.rain && rain) {
-            val r = MatrixRainView(c)
-            r.alpha = rainAlpha
-            f.addView(r, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        }
         f.addView(content, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         return f
     }
@@ -274,7 +246,7 @@ object Neo {
     }
 }
 
-/** Speech bubble drawn from a path: rounded body + small tail, gradient fill, optional neon outline. */
+/** Speech bubble drawn from a path: rounded body + small tail, gradient fill, optional outline. */
 class BubbleDrawable(
     private val c1: Int, private val c2: Int, private val stroke: Int,
     private val sent: Boolean, private val rad: Float, private val tailW: Float
@@ -312,9 +284,6 @@ class BubbleDrawable(
     override fun draw(canvas: Canvas) {
         canvas.drawPath(path, fill)
         if (stroke != 0) {
-            line.strokeWidth = 7f
-            line.color = Neo.withAlpha(stroke, 45)
-            canvas.drawPath(path, line)
             line.strokeWidth = 2.5f
             line.color = stroke
             canvas.drawPath(path, line)
@@ -326,7 +295,7 @@ class BubbleDrawable(
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }
 
-/** A line icon drawn from a tiny path (24x24 grid) with a soft drop shadow; "duo" icons also get a fill. */
+/** A line icon drawn from a tiny path (24x24 grid); "duo" icons also get a soft fill. */
 class IconDrawable(private val path: Path, tint: Int, private val px: Int, duo: Boolean) : Drawable() {
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -335,10 +304,9 @@ class IconDrawable(private val path: Path, tint: Int, private val px: Int, duo: 
         strokeJoin = Paint.Join.ROUND
         color = tint
     }
-    private val shadow = Paint(stroke).apply { color = 0x66000000 }
     private val fillP: Paint? = if (duo) Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
-        color = Neo.withAlpha(tint, 70)
+        color = Neo.withAlpha(tint, 50)
     } else null
 
     override fun draw(canvas: Canvas) {
@@ -347,10 +315,6 @@ class IconDrawable(private val path: Path, tint: Int, private val px: Int, duo: 
         canvas.save()
         canvas.translate(b.left.toFloat(), b.top.toFloat())
         canvas.scale(s, s)
-        canvas.save()
-        canvas.translate(0.9f, 1.2f)
-        canvas.drawPath(path, shadow)
-        canvas.restore()
         fillP?.let { canvas.drawPath(path, it) }
         canvas.drawPath(path, stroke)
         canvas.restore()
