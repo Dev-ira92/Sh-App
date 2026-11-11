@@ -17,6 +17,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 
@@ -29,20 +30,21 @@ class FloatField(ctx: Context, private val label: String, private val validator:
     private val lab: TextView = TextView(ctx)
     private var up = false
     private val s: Float get() = Neo.fs / 1.5f
+    private fun px(v: Float): Int = (v * s * context.resources.displayMetrics.density).toInt()
 
     init {
         edit.background = Neo.box(ctx, Color.WHITE, Neo.BORDER, 10)
         edit.setTextColor(Neo.TEXT)
-        edit.textSize = 16f * s
+        edit.textSize = 19f * s
         edit.typeface = Neo.FONT
         edit.textDirection = View.TEXT_DIRECTION_FIRST_STRONG
         edit.imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
         edit.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-        edit.setPadding(Neo.dp(ctx, 10), Neo.dp(ctx, 10), Neo.dp(ctx, 10), Neo.dp(ctx, (22 * s).toInt()))
-        addView(edit, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        edit.setPadding(Neo.dp(ctx, 10), px(10f), Neo.dp(ctx, 10), px(27f))
+        addView(edit, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         lab.text = label
-        lab.textSize = 14.4f * s
+        lab.textSize = 17f * s
         lab.setTextColor(Neo.LABEL)
         lab.typeface = Neo.FONT
         lab.pivotX = 0f
@@ -51,9 +53,9 @@ class FloatField(ctx: Context, private val label: String, private val validator:
             edit.requestFocus()
             (ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(edit, 0)
         }
-        val lp = LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        val lp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         lp.leftMargin = Neo.dp(ctx, 11)
-        lp.topMargin = Neo.dp(ctx, 14)
+        lp.topMargin = px(11f)
         addView(lab, lp)
 
         edit.setOnFocusChangeListener { _, _ -> update(true) }
@@ -75,6 +77,54 @@ class FloatField(ctx: Context, private val label: String, private val validator:
         edit.background = Neo.box(context, Color.WHITE, if (on) Neo.RED else Neo.BORDER, 10)
     }
 
+    /** Password field with an eye: shows / hides the text. The eye also controls the fields in [also]. */
+    fun password(vararg also: FloatField): FloatField {
+        val hidden = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        val shown = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+        edit.inputType = hidden
+        edit.setPadding(edit.paddingLeft, edit.paddingTop, Neo.dp(context, 48), edit.paddingBottom)
+        var visible = false
+        val eye = ImageButton(context)
+        eye.setBackgroundColor(0)
+        eye.setImageDrawable(Icons.drawable(context, "eye", Neo.LABEL, 24, 1f))
+        eye.contentDescription = "show password"
+        eye.setOnClickListener {
+            visible = !visible
+            for (f in listOf(this) + also) {
+                val e = f.edit
+                val sel = e.selectionEnd
+                e.inputType = if (visible) shown else hidden
+                e.typeface = Neo.FONT
+                e.setSelection(sel.coerceIn(0, e.text.length))
+            }
+            eye.setImageDrawable(Icons.drawable(context, "eye", if (visible) Neo.ACCENT else Neo.LABEL, 24, 1f))
+        }
+        val lp = FrameLayout.LayoutParams(Neo.dp(context, 44), Neo.dp(context, 44))
+        lp.gravity = Gravity.END or Gravity.TOP
+        lp.topMargin = px(2f)
+        addView(eye, lp)
+        return this
+    }
+
+    /** Not typed: tapping opens a picker (country code). Shows a small arrow. */
+    fun readOnly(onTap: () -> Unit): FloatField {
+        edit.isFocusable = false
+        edit.isFocusableInTouchMode = false
+        edit.isCursorVisible = false
+        edit.setOnClickListener { onTap() }
+        lab.setOnClickListener { onTap() }
+        val caret = TextView(context)
+        caret.text = "▾"
+        caret.textSize = 20f * s
+        caret.setTextColor(Neo.LABEL)
+        val lp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        lp.gravity = Gravity.END or Gravity.TOP
+        lp.rightMargin = Neo.dp(context, 10)
+        lp.topMargin = px(10f)
+        addView(caret, lp)
+        return this
+    }
+
     private fun update(animate: Boolean) {
         val t = text()
         val wantUp = edit.hasFocus() || t.isNotEmpty()
@@ -83,7 +133,7 @@ class FloatField(ctx: Context, private val label: String, private val validator:
         lab.typeface = if (wantUp) Neo.BOLD else Neo.FONT
         if (wantUp != up || !animate) {
             up = wantUp
-            val ty = if (wantUp) Neo.dp(context, 16).toFloat() * s else 0f
+            val ty = if (wantUp) px(25f).toFloat() else 0f
             val sc = if (wantUp) 0.78f else 1f
             if (animate) lab.animate().translationY(ty).scaleX(sc).scaleY(sc).setDuration(200).start()
             else { lab.translationY = ty; lab.scaleX = sc; lab.scaleY = sc }
@@ -97,9 +147,9 @@ class PulseTitle(ctx: Context, title: String) : LinearLayout(ctx) {
     private val ring: View
 
     init {
-        orientation = HORIZONTAL
+        orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        val sz = Neo.dp(ctx, 18)
+        val sz = Neo.dp(ctx, 20)
         fun circle(): View = View(ctx).apply {
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Neo.ACCENT) }
         }
@@ -108,15 +158,15 @@ class PulseTitle(ctx: Context, title: String) : LinearLayout(ctx) {
         ring = circle()
         dot.addView(base, FrameLayout.LayoutParams(sz, sz))
         dot.addView(ring, FrameLayout.LayoutParams(sz, sz))
-        addView(dot, LayoutParams(sz, sz))
+        addView(dot, LinearLayout.LayoutParams(sz, sz))
         val tv = TextView(ctx)
         tv.text = title
-        tv.textSize = 28f * (Neo.fs / 1.5f)
+        tv.textSize = 34f * (Neo.fs / 1.5f)
         tv.setTextColor(Neo.ACCENT)
         tv.typeface = Neo.BOLD
         tv.letterSpacing = -0.04f
-        val lp = LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        lp.leftMargin = Neo.dp(ctx, 12)
+        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        lp.leftMargin = Neo.dp(ctx, 14)
         addView(tv, lp)
     }
 
