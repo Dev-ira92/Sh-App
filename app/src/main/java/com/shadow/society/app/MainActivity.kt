@@ -1,6 +1,7 @@
 package com.shadow.society.app
 
 import android.content.Intent
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.os.Bundle
@@ -15,11 +16,13 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import java.util.Locale
 
 /**
- * First run: the sign-up page (phone with country code, password + repeat, my key, Register).
- * Next runs: the login page (password / PIN / fingerprint, depending on what you chose in Settings).
+ * First run: the sign-up page (phone with country code, password + repeat with an eye, my key, optional server,
+ * Register). Next runs: the login page (password / PIN / fingerprint, depending on Settings).
  */
 class MainActivity : AppCompatActivity() {
     private val ui = Handler(Looper.getMainLooper())
@@ -61,7 +64,7 @@ class MainActivity : AppCompatActivity() {
         val wrap = LinearLayout(this)
         wrap.gravity = Gravity.CENTER
         wrap.orientation = LinearLayout.VERTICAL
-        val p = Neo.dp(this, 20)
+        val p = Neo.dp(this, 16)
         wrap.setPadding(p, p, p, p)
         val card = Neo.card(this)
         wrap.addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -70,55 +73,57 @@ class MainActivity : AppCompatActivity() {
         return card
     }
 
-    private fun smallText(s: String, color: Int = Neo.DIM): TextView {
-        val t = Neo.text(this, s, 10, color)
-        return t
-    }
+    private fun body(s: String): TextView = Neo.text(this, s, 11, Neo.DIM)
 
     // ---------- sign up ----------
     private fun buildRegister() {
         val card = shell()
         card.addView(PulseTitle(this, "Shadow"))
-        Neo.add(card, Neo.text(this, tr("Create your account. Your phone number is your online ID.",
-            "ثبت‌نام کن. شماره‌ی موبایلت شناسه‌ی آنلاین توست."), 9, Neo.DIM), 10)
+        Neo.add(card, body(tr("Create your account. Your phone number is your online ID.",
+            "ثبت‌نام کن. شماره‌ی موبایلت شناسه‌ی آنلاین توست.")), 12)
 
-        // phone: country code + number
+        // phone: country code (pick from the list) + number
         val code = FloatField(this, tr("Country code", "کد کشور")) { Regex("\\+\\d{1,4}").matches(it.trim()) }
-        code.edit.inputType = InputType.TYPE_CLASS_PHONE
-        code.edit.setText("+98")
         val phone = FloatField(this, tr("Phone number", "شماره تماس")) { Phones.digits(it).length >= 6 }
         phone.edit.inputType = InputType.TYPE_CLASS_PHONE
-        Neo.add(card, formRow(this, code to 0.4f, phone to 0.6f), 12)
+        val countryCap = Neo.text(this, "", 10, Neo.DIM)
+        fun setCountry(c: Countries.Country) {
+            code.edit.setText("+" + c.code)
+            countryCap.text = c.flag + "  " + c.name
+        }
+        code.readOnly { pickCountry(this) { c -> setCountry(c) } }
+        setCountry(Countries.find(Locale.getDefault().country) ?: Countries.find("IR")!!)
+        Neo.add(card, formRow(this, code to 0.42f, phone to 0.58f), 14)
+        Neo.add(card, countryCap, 4)
 
-        // password + repeat
+        // password + repeat (one eye shows / hides both)
         val pass = FloatField(this, tr("Password", "رمز عبور")) { it.length >= 8 }
         val pass2 = FloatField(this, tr("Repeat password", "تکرار رمز")) { it.length >= 8 && it == pass.text() }
-        val pwType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-        pass.edit.inputType = pwType
-        pass2.edit.inputType = pwType
+        pass2.edit.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        pass.password(pass2)
         pass.edit.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(a: CharSequence?, b: Int, c: Int, d: Int) {}
             override fun onTextChanged(a: CharSequence?, b: Int, c: Int, d: Int) {}
             override fun afterTextChanged(e: android.text.Editable?) { pass2.refresh() }
         })
-        Neo.add(card, formRow(this, pass to 1f, pass2 to 1f), 10)
-        Neo.add(card, smallText(tr("At least 8 characters.", "حداقل ۸ کاراکتر.")), 2)
+        Neo.add(card, formRow(this, pass to 1f, pass2 to 1f), 12)
+        Neo.add(card, Neo.text(this, tr("At least 8 characters. Tap the eye to see them.", "حداقل ۸ کاراکتر. با زدن چشم رمز را ببین."), 9, Neo.DIM), 4)
 
         // my key: created here, one line shown
         var key = keepKey ?: Crypto.hex(Crypto.random(32))
         keepKey = key
-        Neo.add(card, Neo.text(this, tr("My key", "کلید من"), 10, Neo.ACCENT).apply { typeface = Neo.BOLD }, 12)
+        Neo.add(card, Neo.text(this, tr("My key", "کلید من"), 12, Neo.ACCENT).apply { typeface = Neo.BOLD }, 16)
         val keyView = TextView(this)
         keyView.typeface = Typeface.MONOSPACE
-        keyView.textSize = 13f * (Neo.fs / 1.5f)
+        keyView.textSize = 15f * (Neo.fs / 1.5f)
         keyView.setTextColor(Neo.TEXT)
         keyView.setSingleLine(true)
         keyView.ellipsize = TextUtils.TruncateAt.MIDDLE
-        keyView.background = Neo.box(this, android.graphics.Color.WHITE, Neo.BORDER, 10)
-        val kp = Neo.dp(this, 10)
+        keyView.background = Neo.box(this, Color.WHITE, Neo.BORDER, 10)
+        val kp = Neo.dp(this, 12)
         keyView.setPadding(kp, kp, kp, kp)
         keyView.text = key
-        Neo.add(card, keyView, 4)
+        Neo.add(card, keyView, 6)
 
         val create = Neo.button(this, tr("Create", "ایجاد"))
         val copy = Neo.button(this, tr("Copy", "کپی"))
@@ -132,9 +137,28 @@ class MainActivity : AppCompatActivity() {
         copy.setOnClickListener { Neo.copy(this, key) }
         send.setOnClickListener { sendDialog(key) }
 
+        // online (optional)
+        Neo.add(card, Neo.text(this, tr("Online (optional)", "آنلاین (اختیاری)"), 12, Neo.ACCENT).apply { typeface = Neo.BOLD }, 20)
+        Neo.add(card, body(tr("To chat online and use all the features, enter the server address and the server password.",
+            "برای ارتباط آنلاین و استفاده از تمام قابلیت‌ها، آدرس سرور و رمز سرور را وارد کنید.")), 4)
+        val srvUrl = FloatField(this, tr("Server address", "آدرس سرور")) { OnlineParse.cleanUrl(it) != null }
+        srvUrl.edit.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+        val srvKey = FloatField(this, tr("Server password", "رمز سرور")) { s ->
+            val t = s.trim()
+            t.length >= 8 && t.none { it.isWhitespace() || it == '|' }
+        }.password()
+        Neo.add(card, srvUrl, 10)
+        Neo.add(card, srvKey, 10)
+        val guide = Neo.button(this, tr("Server guide", "راهنمای سرور"))
+        Neo.add(card, guide, 10)
+        guide.setOnClickListener { startActivity(Intent(this, ServerGuideActivity::class.java)) }
+
         // register
         val reg = Neo.primary(this, tr("Register", "ثبت نام"))
-        Neo.add(card, reg, 16)
+        reg.textSize = 20f
+        val rp = Neo.dp(this, 14)
+        reg.setPadding(rp, rp, rp, rp)
+        Neo.add(card, reg, 20)
         status = Neo.text(this, "", 10, Neo.DIM)
         Neo.add(card, status, 8)
 
@@ -142,26 +166,35 @@ class MainActivity : AppCompatActivity() {
             val c = code.text().trim()
             val num = Phones.digits(phone.text())
             val pw = pass.text()
+            val su = srvUrl.text().trim()
+            val sk = srvKey.text().trim()
+            val wantsServer = su.isNotEmpty() || sk.isNotEmpty()
+            val url = OnlineParse.cleanUrl(su)
+            val keyOk = sk.length >= 8 && sk.none { it.isWhitespace() || it == '|' }
             val e = when {
-                !Regex("\\+\\d{1,4}").matches(c) -> tr("Enter a country code like +98", "کد کشور را مثل +98 وارد کن")
+                !Regex("\\+\\d{1,4}").matches(c) -> tr("Choose a country code", "یک کد کشور انتخاب کن")
                 num.length < 6 -> tr("Enter a valid phone number", "یک شماره‌ی معتبر وارد کن")
                 pw.length < 8 -> tr("Password: at least 8 characters", "رمز عبور: حداقل ۸ کاراکتر")
                 pw != pass2.text() -> tr("The two passwords differ", "دو رمز یکسان نیستند")
+                wantsServer && url == null -> tr("The server address must start with https://", "آدرس سرور باید با https:// شروع شود")
+                wantsServer && !keyOk -> tr("Server password: at least 8 characters, no spaces", "رمز سرور: حداقل ۸ کاراکتر، بدون فاصله")
                 else -> null
             }
-            code.bad(!Regex("\\+\\d{1,4}").matches(c))
             phone.bad(num.length < 6)
             pass.bad(pw.length < 8)
             pass2.bad(pw != pass2.text())
-            if (e != null) err(e) else register(pw, c + num.trimStart('0'), key)
+            srvUrl.bad(wantsServer && url == null)
+            srvKey.bad(wantsServer && !keyOk)
+            if (e != null) err(e)
+            else register(pw, c + num.trimStart('0'), key, if (wantsServer && url != null) ServerInfo(url, sk) else null)
         }
 
         // language links
         val langRow = LinearLayout(this)
         langRow.gravity = Gravity.CENTER
         for ((i, pair) in listOf("fa" to "فارسی", "en" to "English").withIndex()) {
-            if (i > 0) langRow.addView(Neo.text(this, "  |  ", 9, Neo.DIM))
-            val tv = Neo.text(this, pair.second, 9, Neo.ACCENT)
+            if (i > 0) langRow.addView(Neo.text(this, "  |  ", 10, Neo.DIM))
+            val tv = Neo.text(this, pair.second, 10, Neo.ACCENT)
             if (Lang.code == pair.first) tv.paintFlags = tv.paintFlags or Paint.UNDERLINE_TEXT_FLAG
             tv.setOnClickListener {
                 Prefs.putStr(this, "lang", pair.first)
@@ -171,16 +204,16 @@ class MainActivity : AppCompatActivity() {
             }
             langRow.addView(tv)
         }
-        Neo.add(card, langRow, 14)
+        Neo.add(card, langRow, 16)
     }
 
-    private fun register(pw: String, phone: String, key: String) {
+    private fun register(pw: String, phone: String, key: String, server: ServerInfo?) {
         if (busy) return
         busy = true
         status.setTextColor(Neo.DIM)
         status.text = tr("Creating your account…", "در حال ساخت حساب…")
         Thread {
-            val r = try {
+            val ok = try {
                 deleteDatabase(Db.NAME)
                 Vault.storeSalt(this, Vault.newSalt())
                 Prefs.putStr(this, "lock_type", LockType.PASS)
@@ -188,11 +221,29 @@ class MainActivity : AppCompatActivity() {
                 Db.get(this).db()
                 Db.get(this).setMeta("my_key", key)
                 Online.setMyPhone(this, phone)
-                OK
-            } catch (e: Exception) { ERROR }
+                if (server != null) Online.saveServer(this, server)
+                true
+            } catch (e: Exception) { false }
             ui.post {
-                busy = false
-                if (r == OK) { keepKey = null; openNext() } else err(tr("Something went wrong", "مشکلی پیش آمد"))
+                if (!ok) {
+                    busy = false
+                    err(tr("Something went wrong", "مشکلی پیش آمد"))
+                } else if (server == null) {
+                    busy = false
+                    keepKey = null
+                    openNext()
+                } else {
+                    status.text = tr("Registering on the server…", "در حال ثبت روی سرور…")
+                    registerOnline(this) { e ->
+                        busy = false
+                        keepKey = null
+                        if (e != null) {
+                            Toast.makeText(this, tr("Account created, but online is not ready: ", "حساب ساخته شد، ولی آنلاین آماده نیست: ") + e,
+                                Toast.LENGTH_LONG).show()
+                        }
+                        openNext()
+                    }
+                }
             }
         }.start()
     }
@@ -228,26 +279,27 @@ class MainActivity : AppCompatActivity() {
     private fun buildLogin() {
         val card = shell()
         card.addView(PulseTitle(this, "Shadow"))
-        Neo.add(card, Neo.text(this, LockType.loginHint(type), 9, Neo.DIM), 10)
+        Neo.add(card, body(LockType.loginHint(type)), 12)
         val holder = Neo.vertical(this)
-        Neo.add(card, holder, 12)
+        Neo.add(card, holder, 14)
         status = Neo.text(this, "", 10, Neo.DIM)
 
         when (type) {
             LockType.PASS -> {
-                val f = FloatField(this, tr("Password", "رمز عبور")) { it.isNotEmpty() }
-                f.edit.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                val f = FloatField(this, tr("Password", "رمز عبور")) { it.isNotEmpty() }.password()
                 f.edit.imeOptions = EditorInfo.IME_ACTION_DONE or EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
                 passField = f
                 Neo.add(holder, f, 0)
                 val b = Neo.primary(this, tr("Log in", "ورود"))
-                Neo.add(holder, b, 12)
+                b.textSize = 20f
+                Neo.add(holder, b, 14)
                 val go = { val s = f.text(); if (s.isNotEmpty()) attempt(s) }
                 b.setOnClickListener { go() }
                 f.edit.setOnEditorActionListener { _, _, _ -> go(); true }
             }
             LockType.BIO -> {
                 val b = Neo.primary(this, tr("Unlock", "باز کردن"))
+                b.textSize = 20f
                 Neo.add(holder, b, 4)
                 b.setOnClickListener { askBio() }
                 askBio()
