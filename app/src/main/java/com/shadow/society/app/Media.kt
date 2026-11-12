@@ -76,7 +76,9 @@ object ImgStore {
 
 /**
  * Images. Wire modes: 2 = plain image, 3 = IV + AES-256-GCM(image).
- * Message tag bits: 1 imported, 2 exported, 4 image, 8 stored in the encrypted file store (body = file name).
+ * Message tag bits: 1 imported, 2 exported, 4 media (image / voice / video), 8 stored in the encrypted file store (body = file name),
+ * 16 came through the internal server, 32 voice message, 64 video, 128 "already looked inside".
+ * Voice and video use the same wire modes 2 / 3 as images; their data starts with the 7-byte header "SHMA" + kind + seconds.
  */
 object Media {
     class Preset(val en: String, val fa: String, val side: Int, val bytes: Int, val smsOk: Boolean, val mode: Int = 0) {
@@ -257,6 +259,55 @@ object Media {
 
     fun smsParts(payload: ByteArray): Int = Codec.estimateParts(payload.size)
 
+    // ---------- voice messages and videos ----------
+    const val KIND_IMAGE = 0
+    const val KIND_AUDIO = 1
+    const val KIND_VIDEO = 2
+    const val TAG_AUDIO = 32
+    const val TAG_VIDEO = 64
+    const val TAG_CHECKED = 128
+
+    private val MAGIC = byteArrayOf('S'.code.toByte(), 'H'.code.toByte(), 'M'.code.toByte(), 'A'.code.toByte())
+
+    class Av(val kind: Int, val seconds: Int, val data: ByteArray)
+    class AvInfo(val kind: Int, val seconds: Int, val bytes: Int)
+
+    /** "SHMA" + kind (1 voice, 2 video) + seconds (2 bytes) + the media file. This whole thing is what gets encrypted. */
+    fun avWrap(kind: Int, seconds: Int, data: ByteArray): ByteArray {
+        val s = seconds.coerceIn(0, 65535)
+        return MAGIC + byteArrayOf(kind.toByte(), (s shr 8).toByte(), s.toByte()) + data
+    }
+
+    /** The reverse of avWrap, or null if these bytes are not a voice message / video (an ordinary image). */
+    fun avUnwrap(b: ByteArray): Av? {
+        if (b.size < 8) return null
+        for (i in 0..3) if (b[i] != MAGIC[i]) return null
+        val kind = b[4].toInt()
+        if (kind != KIND_AUDIO && kind != KIND_VIDEO) return null
+        val sec = ((b[5].toInt() and 255) shl 8) or (b[6].toInt() and 255)
+        return Av(kind, sec, b.copyOfRange(7, b.size))
+    }
+
+    fun setAvInfo(c: Context, id: Long, kind: Int, seconds: Int, bytes: Int) {
+        try { Db.get(c).setMeta("av_$id", "$kind|$seconds|$bytes") } catch (e: Exception) { }
+    }
+
+    fun avInfo(c: Context, id: Long): AvInfo? {
+        val s = try { Db.get(c).getMeta("av_$id") } catch (e: Exception) { null } ?: return null
+        val p = s.split("|")
+        if (p.size != 3) return null
+        return AvInfo(p[0].toIntOrNull() ?: return null, p[1].toIntOrNull() ?: 0, p[2].toIntOrNull() ?: 0)
+    }
+
+    /** Remembers (in the message tag) what a media message really is, so it is only opened once to find out. */
+    fun markChecked(c: Context, id: Long, kind: Int, av: Av?) {
+        var add = TAG_CHECKED
+        if (kind == KIND_AUDIO) add = add or TAG_AUDIO
+        if (kind == KIND_VIDEO) add = add or TAG_VIDEO
+        try { Db.get(c).db().execSQL("UPDATE messages SET tag = (tag | ?) WHERE id=?", arrayOf<Any?>(add, id)) } catch (e: Exception) { }
+        if (av != null) setAvInfo(c, id, av.kind, av.seconds, av.data.size)
+    }
+
     // ---------- files ----------
     /** An image as a .txt file (one SHSO1 line) that you can send with any app. */
     fun exportImage(c: Context, ct: Contact, payload: ByteArray, ts: Long): File {
@@ -296,7 +347,7 @@ object Media {
             if (readable) {
                 var t = m.body
                 if (img) {
-                    t = "[image]"
+                    t = if ((m.tag and TAG_AUDIO) != 0) "[voice message]" else if ((m.tag and TAG_VIDEO) != 0) "[video]" else "[image]"
                 } else if (m.cipher) {
                     t = "[encrypted]"
                     if (key != null) {
@@ -385,12 +436,13 @@ private fun dLabel(ts: Long): String {
 }
 
 /**
- * Chat list adapter: text and image bubbles. Mine on the right, friend's on the left, each with a tail.
+ * Chat list adapter: text, image, voice-message and video bubbles. Mine on the right, friend's on the left, each with a tail.
  * Fire messages are decrypted only if the key in RAM matches; otherwise only the raw text is shown.
- * Long-press copies the text (or the raw ciphertext of a small image). Tap an image to open it.
+ * Long-press copies the text (or the raw ciphertext of a small attachment). Tap an image / voice / video to open it.
  */
-class ChatAdapter(private val ctx: Context, private val onImage: (Msg) -> Unit) : BaseAdapter() {
+class ChatAdapter(private val ctx: Context, private val onMedia: (Msg, Int) -> Unit) : BaseAdapter() {
     private var items: List<Msg> = emptyList()
+    private val kinds = HashMap<Long, Int>()
     private val cache = object : LruCache<Long, Bitmap>(24 * 1024 * 1024) {
         override fun sizeOf(key: Long, value: Bitmap): Int = value.byteCount
     }
@@ -405,6 +457,16 @@ class ChatAdapter(private val ctx: Context, private val onImage: (Msg) -> Unit) 
         iv.setPadding(Neo.dp(ctx, 2), 0, Neo.dp(ctx, 2), 0)
         return iv
     }
+
+    /** -1 = not looked at yet. */
+    private fun knownKind(m: Msg): Int = when {
+        (m.tag and Media.TAG_AUDIO) != 0 -> Media.KIND_AUDIO
+        (m.tag and Media.TAG_VIDEO) != 0 -> Media.KIND_VIDEO
+        (m.tag and Media.TAG_CHECKED) != 0 -> Media.KIND_IMAGE
+        else -> kinds[m.id] ?: -1
+    }
+
+    private fun mmss(sec: Int): String = (sec / 60).toString() + ":" + (sec % 60).toString().padStart(2, '0')
 
     override fun getView(pos: Int, v: View?, parent: ViewGroup?): View {
         val m = items[pos]
@@ -427,16 +489,33 @@ class ChatAdapter(private val ctx: Context, private val onImage: (Msg) -> Unit) 
             col.addView(sep, lp)
         }
 
-        val isImg = (m.tag and 4) != 0
+        val isMedia = (m.tag and 4) != 0
+        var kind = Media.KIND_IMAGE
         var text = m.body
         var ok = true
         var bmp: Bitmap? = null
-        if (isImg) {
+        var av: Media.AvInfo? = null
+        if (isMedia) {
             ok = !m.cipher || SessionVault.key(m.contactId) != null
-            if (ok) {
+            var pre: ByteArray? = null
+            var known = knownKind(m)
+            if (ok && known < 0) {
+                // first time: look inside once to see if it is a picture, a voice message or a video
+                pre = Media.imageBytes(ctx, m)
+                if (pre == null) {
+                    ok = false
+                } else {
+                    val unwrapped = Media.avUnwrap(pre)
+                    known = if (unwrapped == null) Media.KIND_IMAGE else unwrapped.kind
+                    kinds[m.id] = known
+                    Media.markChecked(ctx, m.id, known, unwrapped)
+                }
+            }
+            if (known >= 0) kind = known
+            if (ok && kind == Media.KIND_IMAGE) {
                 bmp = cache.get(m.id)
                 if (bmp == null) {
-                    val b = Media.imageBytes(ctx, m)
+                    val b = pre ?: Media.imageBytes(ctx, m)
                     if (b == null) {
                         ok = false
                     } else {
@@ -444,6 +523,8 @@ class ChatAdapter(private val ctx: Context, private val onImage: (Msg) -> Unit) 
                         if (bmp != null) cache.put(m.id, bmp)
                     }
                 }
+            } else if (ok) {
+                av = Media.avInfo(ctx, m.id)
             }
         } else if (m.cipher) {
             ok = false
@@ -468,18 +549,33 @@ class ChatAdapter(private val ctx: Context, private val onImage: (Msg) -> Unit) 
         }
 
         val screenW = ctx.resources.displayMetrics.widthPixels
-        if (isImg && ok && bmp != null) {
+        if (isMedia && ok && kind == Media.KIND_IMAGE && bmp != null) {
             val iv = ImageView(ctx)
             iv.setImageBitmap(bmp)
             iv.scaleType = ImageView.ScaleType.FIT_CENTER
             val w = minOf((screenW * 0.62f).toInt(), bmp.width * Neo.dp(ctx, 2))
             val h = w * bmp.height / maxOf(1, bmp.width)
             box.addView(iv, LinearLayout.LayoutParams(w, h))
-        } else if (isImg && ok) {
+        } else if (isMedia && ok && kind == Media.KIND_IMAGE) {
             box.addView(Neo.text(ctx, tr("image is damaged", "تصویر خراب است"), 14, Neo.withAlpha(fg, 150)))
-        } else if (isImg) {
+        } else if (isMedia && ok) {
+            // voice message / video: a play button with the length and size
+            val row = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                minimumWidth = (screenW * 0.5f).toInt()
+            }
+            row.addView(Neo.text(ctx, "▶", 22, fg))
+            val info = Neo.vertical(ctx)
+            info.setPadding(Neo.dp(ctx, 12), 0, 0, 0)
+            info.addView(Neo.text(ctx, if (kind == Media.KIND_AUDIO) tr("Voice message", "پیام صوتی") else tr("Video", "ویدیو"), 14, fg))
+            val detail = if (av != null) mmss(av.seconds) + "  ·  " + Shrink.fmt(av.bytes.toLong()) else tr("tap to play", "برای پخش بزن")
+            info.addView(Neo.text(ctx, detail, 10, soft))
+            row.addView(info)
+            box.addView(row)
+        } else if (isMedia) {
             val kb = if ((m.tag and 8) != 0) "" else " (" + maxOf(1, m.body.length * 3 / 4 / 1024) + " KB)"
-            box.addView(Neo.text(ctx, tr("encrypted image", "تصویر رمزشده") + kb, 14, Neo.withAlpha(fg, 150)))
+            box.addView(Neo.text(ctx, tr("encrypted attachment", "پیوست رمزشده") + kb, 14, Neo.withAlpha(fg, 150)))
         } else {
             val tv = Neo.text(ctx, shown, 15, if (ok) fg else Neo.withAlpha(fg, 150)).apply {
                 maxWidth = (screenW * 0.72f).toInt()
@@ -514,12 +610,12 @@ class ChatAdapter(private val ctx: Context, private val onImage: (Msg) -> Unit) 
         }
         box.addView(foot)
 
-        if (!isImg) {
+        if (!isMedia) {
             box.setOnLongClickListener { Neo.copy(ctx, shown); true }
         } else if (!ok && (m.tag and 8) == 0) {
             box.setOnLongClickListener { Neo.copy(ctx, m.body); true }
         }
-        if (isImg && ok && bmp != null) box.setOnClickListener { onImage(m) }
+        if (isMedia && ok && (bmp != null || kind != Media.KIND_IMAGE)) box.setOnClickListener { onMedia(m, kind) }
 
         val lpB = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         lpB.gravity = if (m.sent) Gravity.RIGHT else Gravity.LEFT
