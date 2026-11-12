@@ -16,7 +16,6 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.widget.doAfterTextChanged
-import java.io.File
 
 class ChatActivity : OnlineBase() {
     private var contact: Contact? = null
@@ -26,12 +25,38 @@ class ChatActivity : OnlineBase() {
     private lateinit var header: TextView
     private lateinit var counter: TextView
 
+    private var pendingSave: ByteArray? = null
+    private var cancelFn: (() -> Unit)? = null
+
     private val pickLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) onFilePicked(uri)
     }
 
     private val imgLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) onImagePicked(uri)
+    }
+
+    private val vidLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) onVideoPicked(uri)
+    }
+
+    private val audLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) onAudioPicked(uri)
+    }
+
+    /** "Save to the phone": the system asks where to put the file (no storage permission needed). */
+    private val saveLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument()) { uri ->
+        val b = pendingSave
+        pendingSave = null
+        if (uri != null && b != null) {
+            Thread {
+                val ok = try {
+                    contentResolver.openOutputStream(uri)?.use { it.write(b) }
+                    true
+                } catch (e: Exception) { false }
+                runOnUiThread { toast(if (ok) tr("Saved", "ذخیره شد") else tr("Could not save", "ذخیره نشد")) }
+            }.start()
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -62,7 +87,7 @@ class ChatActivity : OnlineBase() {
         lv.selector = ColorDrawable(0)
         lv.isStackFromBottom = true
         lv.transcriptMode = ListView.TRANSCRIPT_MODE_ALWAYS_SCROLL
-        adapter = ChatAdapter(this) { m -> viewImage(m) }
+        adapter = ChatAdapter(this) { m, k -> openMedia(m, k) }
         lv.adapter = adapter
         root.addView(lv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
@@ -78,7 +103,7 @@ class ChatActivity : OnlineBase() {
         row.elevation = Neo.dp(this, 6).toFloat()
         row.setPadding(p / 2, p / 2, p / 2, p / 2)
 
-        row.addView(Icons.button(this, "image", Neo.ACCENT) { pickImage() })
+        row.addView(Icons.button(this, "add", Neo.ACCENT) { attach() })
 
         input = Neo.input(this, tr("Message", "پیام"))
         input.maxLines = 4
@@ -106,6 +131,7 @@ class ChatActivity : OnlineBase() {
         Inbox.listener = Runnable { reload() }
         OnlinePoll.start(this)
         Thread {
+            AvKit.clean(this)
             if (Inbox.drain(this) > 0) runOnUiThread { reload() }
             ImgStore.sweep(this)
         }.start()
@@ -280,46 +306,117 @@ class ChatActivity : OnlineBase() {
         reload()
     }
 
-    // ---------- images ----------
-    private fun pickImage() {
+    // ---------- the + button: photo, video, voice message, audio file ----------
+    private fun attach() {
         val c = contact ?: return
         if (c.level == 1 && SessionVault.key(c.id) == null) { unlock(); return }
-        imgLauncher.launch("image/*")
+        val labels = arrayOf(
+            "🖼 " + tr("Photo", "عکس"),
+            "🎬 " + tr("Video", "فیلم"),
+            "🎤 " + tr("Record a voice message", "ضبط پیام صوتی"),
+            "🎵 " + tr("Audio file", "فایل صوتی"))
+        Dialogs.choose(this, tr("Send", "ارسال"), labels, -1) { w ->
+            when (w) {
+                0 -> imgLauncher.launch("image/*")
+                1 -> vidLauncher.launch("video/*")
+                2 -> recordVoice()
+                else -> audLauncher.launch("audio/*")
+            }
+        }
     }
 
+    /** Voice and video go online only (an SMS cannot carry them). */
+    private fun askMediaDest(c: Contact, cb: (SendFlow.Choice) -> Unit) {
+        val labels = arrayOf(
+            "🏠 " + tr("Internal server (online)", "سرور داخلی (آنلاین)"),
+            "📤 " + tr("Other app, as a .txt file", "برنامه‌ی دیگر، فایل txt"),
+            "📤 " + tr("Other app, as a .json file", "برنامه‌ی دیگر، فایل json"))
+        Dialogs.choose(this, tr("Voice and video go online only", "صدا و فیلم فقط آنلاین می‌روند"), labels, 0) { w ->
+            val ch = when (w) {
+                0 -> SendFlow.Choice(1)
+                1 -> SendFlow.Choice(2, -1, 1)
+                else -> SendFlow.Choice(2, -1, 2)
+            }
+            guardPlain(c, ch) { cb(ch) }
+        }
+    }
+
+    // ---------- photos ----------
     private fun onImagePicked(uri: Uri) {
         val c = contact ?: return
         SendFlow.ask(this, c) { ch -> guardPlain(c, ch) { chooseSize(c, uri, ch) } }
     }
 
     private fun chooseSize(c: Contact, uri: Uri, ch: SendFlow.Choice) {
-        val list = Media.PRESETS.filter { ch.kind != 0 || it.smsOk }
-        val labels = Array(list.size) {
-            val p = list[it]
-            if (p.bytes > 0) p.label() + "  ≈ " + (p.bytes / 1000) + " KB" + (if (ch.kind == 0) "  ·  ~" + Codec.estimateParts(p.bytes + 30) + " SMS" else "")
-            else p.label()
-        }
-        Dialogs.choose(this, tr("Image size", "اندازه‌ی عکس"), labels, -1) { w ->
-            val preset = list[w]
-            if (preset.mode == 2) {
-                Dialogs.confirm(this, tr("The original file also contains the photo's location (GPS) and camera details, and it will be sent as it is. Continue?",
-                    "فایل اصلی شامل موقعیت مکانی (GPS) و مشخصات دوربین هم هست و همان‌طور که هست فرستاده می‌شود. ادامه؟")) {
-                    prepareAndSend(c, uri, preset, ch)
-                }
-            } else {
-                prepareAndSend(c, uri, preset, ch)
-            }
-        }
+        if (ch.kind == 0) { smsSizes(c, uri, ch); return }   // SMS: tiny sizes
+        val labels = arrayOf(
+            "✨ " + tr("Excellent — up to 2000 px, high quality", "عالی — تا ۲۰۰۰ پیکسل، کیفیت بالا"),
+            "👍 " + tr("Good — up to 1000 px, small size", "خوب — تا ۱۰۰۰ پیکسل، حجم کم"),
+            "🎞 " + tr("Original — every pixel, no loss, location removed (big)", "اصلی — همه‌ی پیکسل‌ها، بدون افت، بدون موقعیت (حجم زیاد)"),
+            "📄 " + tr("The exact file as taken (keeps the location)", "فایل دقیق همان‌طور که هست (با موقعیت)"))
+        Dialogs.choose(this, tr("Photo quality", "کیفیت عکس"), labels, 0) { w -> processPhoto(c, uri, ch, w) }
     }
 
-    private fun prepareAndSend(c: Contact, uri: Uri, preset: Media.Preset, ch: SendFlow.Choice) {
+    private fun processPhoto(c: Contact, uri: Uri, ch: SendFlow.Choice, w: Int) {
+        toast(tr("Preparing the photo…", "در حال آماده‌سازی عکس…"))
+        Thread {
+            var bytes: ByteArray? = null
+            var note = ""
+            try {
+                if (w == 3) {
+                    bytes = Shrink.prepare(this, uri, Shrink.Opt(0.0, 0L), 0L)
+                } else {
+                    val mode = when (w) {
+                        0 -> ImageProcessor.Mode.EXCELLENT
+                        1 -> ImageProcessor.Mode.GOOD
+                        else -> ImageProcessor.Mode.ORIGINAL
+                    }
+                    val r = ImageProcessor.process(this, uri, mode)
+                    if (r != null) {
+                        bytes = r.bytes
+                        note = r.note + " · " + r.width + "×" + r.height
+                    }
+                }
+            } catch (t: Throwable) { }
+            val out = bytes
+            runOnUiThread {
+                if (out == null) {
+                    toast(tr("Could not prepare the photo (too big or not readable)", "عکس آماده نشد (خیلی بزرگ یا ناخوانا)"))
+                } else {
+                    Dialogs.confirm(this, tr("Final size: ", "حجم نهایی: ") + Shrink.fmt(out.size.toLong()) +
+                            (if (note.isNotEmpty()) "\n$note" else "") + "\n" + tr("Send?", "ارسال شود؟")) {
+                        dispatchImage(c, out, ch)
+                    }
+                }
+            }
+        }.start()
+    }
+
+    /** SMS: the old short list of tiny sizes. */
+    private fun smsSizes(c: Contact, uri: Uri, ch: SendFlow.Choice) {
+        Thread {
+            val orig = Shrink.sizeOf(this, uri)
+            runOnUiThread {
+                if (orig <= 0) {
+                    toast(tr("Could not read the image", "عکس خوانده نشد"))
+                } else {
+                    val opts = Shrink.options(orig, true)
+                    val labels = Array(opts.size) { Shrink.label(opts[it], true) }
+                    Dialogs.choose(this, tr("Image — original ", "عکس — حجم اصلی ") + Shrink.fmt(orig), labels, -1) { w ->
+                        prepareAndSend(c, uri, opts[w], orig, ch)
+                    }
+                }
+            }
+        }.start()
+    }
+
+    private fun prepareAndSend(c: Contact, uri: Uri, opt: Shrink.Opt, orig: Long, ch: SendFlow.Choice) {
         toast(tr("Preparing the image…", "در حال آماده‌سازی عکس…"))
         Thread {
-            val img = Media.prepare(this, uri, preset)
+            val img = Shrink.prepare(this, uri, opt, orig)
             runOnUiThread {
                 if (img == null) {
-                    toast(tr("Could not read the image, or it is larger than 8 MB. Try 'Full size'.",
-                        "عکس خوانده نشد یا بزرگ‌تر از ۸ مگابایت است. «اندازه‌ی کامل» را امتحان کن."))
+                    toast(tr("Could not prepare the image. Choose a reduction.", "عکس آماده نشد. یک کاهش انتخاب کن."))
                 } else {
                     dispatchImage(c, img, ch)
                 }
@@ -338,7 +435,7 @@ class ChatActivity : OnlineBase() {
             0 -> {
                 val parts = Media.smsParts(payload)
                 if (parts > Media.MAX_SMS_PARTS) {
-                    toast(tr("Too big for SMS. Choose a smaller size or go online.", "برای پیامک بزرگ است. اندازه‌ی کوچک‌تر یا آنلاین را انتخاب کن."))
+                    toast(tr("Too big for SMS. Choose a bigger reduction or go online.", "برای پیامک بزرگ است. کاهش بیشتر یا آنلاین را انتخاب کن."))
                     return
                 }
                 if (!smsOk(c)) return
@@ -346,21 +443,22 @@ class ChatActivity : OnlineBase() {
                         tr("Sending takes a while and your operator may charge for each SMS. Send?",
                             "ارسال زمان می‌برد و ممکن است اپراتور برای هر پیامک هزینه بگیرد. ارسال شود؟")) {
                     val st = Media.store(this, img)
-                    val id = Messages.insert(this, Msg(0, c.id, st.first, true, now, true, false, 0, 4 or st.second))
+                    val id = Messages.insert(this, Msg(0, c.id, st.first, true, now, true, false, 0, 4 or Media.TAG_CHECKED or st.second))
                     try { SimSender.send(this, c.phone, payload, id, ch.subId) } catch (e: Exception) { Messages.setStatus(this, id, 2) }
                     reload()
                 }
             }
             1 -> {
                 if (payload.size > Online.MAX_PAYLOAD) {
-                    toast(tr("Too big for the internal server (max about 8 MB).", "برای سرور داخلی بزرگ است (حداکثر حدود ۸ مگابایت)."))
+                    toast(tr("Too big for the internal server (max about 8 MB). Choose a smaller quality.",
+                        "برای سرور داخلی بزرگ است (حداکثر حدود ۸ مگابایت). کیفیت کمتری انتخاب کن."))
                     return
                 }
                 if (!onlineReady(c)) return
                 toast(tr("Uploading $kb KB…", "در حال ارسال $kb KB…"))
                 Thread {
                     val st = Media.store(this, img)
-                    val id = Messages.insert(this, Msg(0, c.id, st.first, true, now, true, false, 0, 4 or st.second))
+                    val id = Messages.insert(this, Msg(0, c.id, st.first, true, now, true, false, 0, 4 or Media.TAG_CHECKED or st.second))
                     runOnUiThread { reload() }
                     val err = Online.sendTo(this, c, payload, now)
                     try { Messages.setStatus(this, id, if (err == null) 1 else 2) } catch (e: Exception) { }
@@ -373,7 +471,7 @@ class ChatActivity : OnlineBase() {
             else -> {
                 Thread {
                     val st = Media.store(this, img)
-                    Messages.insert(this, Msg(0, c.id, st.first, true, now, true, false, 1, 2 or 4 or st.second))
+                    Messages.insert(this, Msg(0, c.id, st.first, true, now, true, false, 1, 2 or 4 or Media.TAG_CHECKED or st.second))
                     runOnUiThread {
                         reload()
                         shareOut(c, payload, now, ch.format, true)
@@ -383,30 +481,203 @@ class ChatActivity : OnlineBase() {
         }
     }
 
-    private fun viewImage(m: Msg) {
+    // ---------- voice messages ----------
+    private fun recordVoice() {
+        val c = contact ?: return
+        if (!AvKit.hasMic(this)) {
+            AvKit.askMic(this)
+            toast(tr("Allow the microphone, then tap again", "میکروفون را اجازه بده، بعد دوباره بزن"))
+            return
+        }
+        askMediaDest(c) { ch ->
+            AvKit.recordDialog(this) { data, sec -> sendAv(c, Media.KIND_AUDIO, sec, data, ch) }
+        }
+    }
+
+    private fun onAudioPicked(uri: Uri) {
+        val c = contact ?: return
+        askMediaDest(c) { ch ->
+            toast(tr("Reading the file…", "در حال خواندن فایل…"))
+            Thread {
+                val data = try { contentResolver.openInputStream(uri)?.use { it.readBytes() } } catch (e: Throwable) { null }
+                val sec = AvKit.audioSeconds(this, uri)
+                runOnUiThread {
+                    if (data == null || data.isEmpty()) toast(tr("Could not read the file", "فایل خوانده نشد"))
+                    else if (data.size > AvKit.MAX_AV) toast(tr("Too big (max about 7 MB)", "خیلی بزرگ است (حداکثر حدود ۷ مگابایت)"))
+                    else sendAv(c, Media.KIND_AUDIO, sec, data, ch)
+                }
+            }.start()
+        }
+    }
+
+    // ---------- videos ----------
+    private fun onVideoPicked(uri: Uri) {
+        val c = contact ?: return
+        askMediaDest(c) { ch -> chooseVideoQuality(c, uri, ch) }
+    }
+
+    private fun chooseVideoQuality(c: Contact, uri: Uri, ch: SendFlow.Choice) {
+        Thread {
+            val info = AvKit.videoInfo(this, uri)
+            val size = Shrink.sizeOf(this, uri)
+            runOnUiThread {
+                if (info == null) {
+                    toast(tr("Could not read the video", "فیلم خوانده نشد"))
+                    return@runOnUiThread
+                }
+                val labels = ArrayList<String>()
+                val acts = ArrayList<() -> Unit>()
+                val len = AvKit.fmtTime(info.seconds)
+
+                if (size in 1..AvKit.MAX_AV.toLong()) {
+                    labels.add("📄 " + tr("Original, not compressed", "اصلی، بدون فشرده‌سازی") + " — " + Shrink.fmt(size) + "  ($len)")
+                    acts.add { sendOriginalVideo(c, uri, info.seconds, ch) }
+                }
+                for (p in AvKit.VIDEO_PRESETS) {
+                    val est = AvKit.estimate(info.seconds, p)
+                    val tooBig = est > AvKit.MAX_AV
+                    labels.add((if (tooBig) "✗ " else "") + p.height + "p — ≈ " + Shrink.fmt(est) + "  ($len)" +
+                            (if (tooBig) "  " + tr("too long", "خیلی طولانی") else ""))
+                    acts.add {
+                        if (tooBig) toast(tr("This video is too long for this quality. Choose a smaller one or a shorter video.",
+                            "این فیلم برای این کیفیت خیلی طولانی است. کیفیت کمتر یا فیلم کوتاه‌تر انتخاب کن."))
+                        else compressVideo(c, uri, ch, info, p)
+                    }
+                }
+                Dialogs.choose(this, tr("Video quality (max about 7 MB)", "کیفیت فیلم (حداکثر حدود ۷ مگابایت)"), labels.toTypedArray(), -1) { w -> acts[w]() }
+            }
+        }.start()
+    }
+
+    private fun sendOriginalVideo(c: Contact, uri: Uri, seconds: Int, ch: SendFlow.Choice) {
+        Thread {
+            val data = try { contentResolver.openInputStream(uri)?.use { it.readBytes() } } catch (e: Throwable) { null }
+            runOnUiThread {
+                if (data == null || data.isEmpty()) toast(tr("Could not read the file", "فایل خوانده نشد"))
+                else sendAv(c, Media.KIND_VIDEO, seconds, data, ch)
+            }
+        }.start()
+    }
+
+    private fun compressVideo(c: Contact, uri: Uri, ch: SendFlow.Choice, info: AvKit.VideoInfo, p: AvKit.VideoPreset) {
+        val h = if (info.height > 0) minOf(p.height, info.height) else p.height
+        val dlg = Neo.dialog(this).setTitle(tr("Compressing the video…", "در حال فشرده‌سازی فیلم…"))
+            .setMessage("0%")
+            .setCancelable(false)
+            .setNegativeButton(tr("Cancel", "انصراف")) { _, _ -> cancelFn?.invoke() }
+            .show()
+        cancelFn = AvKit.transcode(this, uri, h, p.videoBps, { pct -> dlg.setMessage("$pct%") }) { bytes, err ->
+            dlg.dismiss()
+            cancelFn = null
+            if (bytes == null) {
+                toast(err ?: tr("Could not compress the video", "فیلم فشرده نشد"))
+            } else if (bytes.size > AvKit.MAX_AV) {
+                toast(tr("The result is still too big. Choose a smaller quality.", "نتیجه هنوز بزرگ است. کیفیت کمتری انتخاب کن."))
+            } else {
+                Dialogs.confirm(this, tr("Final size: ", "حجم نهایی: ") + Shrink.fmt(bytes.size.toLong()) + "\n" + tr("Send?", "ارسال شود؟")) {
+                    sendAv(c, Media.KIND_VIDEO, info.seconds, bytes, ch)
+                }
+            }
+        }
+    }
+
+    // ---------- sending a voice message or video ----------
+    private fun sendAv(c: Contact, kind: Int, seconds: Int, data: ByteArray, ch: SendFlow.Choice) {
+        if (data.size > AvKit.MAX_AV) {
+            toast(tr("Too big for the internal server", "برای سرور داخلی بزرگ است"))
+            return
+        }
+        val key: ByteArray? = if (c.level == 1) SessionVault.key(c.id) else null
+        if (c.level == 1 && key == null) { unlock(); return }
+        val wrapped = Media.avWrap(kind, seconds, data)
+        val payload = Media.imagePayload(key, wrapped)
+        val now = System.currentTimeMillis()
+        val base = 4 or Media.TAG_CHECKED or (if (kind == Media.KIND_AUDIO) Media.TAG_AUDIO else Media.TAG_VIDEO)
+        val kb = maxOf(1, data.size / 1024)
+
+        if (ch.kind == 1) {
+            if (payload.size > Online.MAX_PAYLOAD) {
+                toast(tr("Too big for the internal server", "برای سرور داخلی بزرگ است"))
+                return
+            }
+            if (!onlineReady(c)) return
+            toast(tr("Uploading $kb KB…", "در حال ارسال $kb KB…"))
+            Thread {
+                val st = Media.store(this, wrapped)
+                val id = Messages.insert(this, Msg(0, c.id, st.first, true, now, true, false, 0, base or st.second))
+                Media.setAvInfo(this, id, kind, seconds, data.size)
+                runOnUiThread { reload() }
+                val err = Online.sendTo(this, c, payload, now)
+                try { Messages.setStatus(this, id, if (err == null) 1 else 2) } catch (e: Exception) { }
+                runOnUiThread {
+                    if (err != null) Toast.makeText(this, err, Toast.LENGTH_LONG).show()
+                    reload()
+                }
+            }.start()
+        } else {
+            Thread {
+                val st = Media.store(this, wrapped)
+                val id = Messages.insert(this, Msg(0, c.id, st.first, true, now, true, false, 1, 2 or base or st.second))
+                Media.setAvInfo(this, id, kind, seconds, data.size)
+                runOnUiThread {
+                    reload()
+                    shareOut(c, payload, now, ch.format, true)
+                }
+            }.start()
+        }
+    }
+
+    // ---------- opening a message: photo / voice / video ----------
+    private fun saveBytes(bytes: ByteArray, name: String) {
+        pendingSave = bytes
+        saveLauncher.launch(name)
+    }
+
+    private fun openMedia(m: Msg, kind: Int) {
         toast(tr("Opening…", "در حال باز کردن…"))
         Thread {
             val b = Media.imageBytes(this, m)
-            val bmp = if (b != null) Media.decodeScaled(b, 2048) else null
             runOnUiThread {
-                if (b == null || bmp == null) {
-                    toast(tr("Cannot open the image", "تصویر باز نشد"))
+                if (b == null) {
+                    toast(tr("Cannot open it", "باز نشد"))
                     return@runOnUiThread
                 }
-                val iv = ImageView(this)
-                iv.setImageBitmap(bmp)
-                iv.adjustViewBounds = true
-                val q = Neo.dp(this, 12)
-                iv.setPadding(q, q, q, q)
-                Neo.dialog(this).setView(iv)
-                    .setPositiveButton(tr("Share…", "ارسال…")) { _, _ ->
-                        Dialogs.confirm(this, tr("The shared photo is NOT encrypted. Continue?", "عکسِ ارسالی رمزنگاری نیست. ادامه؟")) {
-                            Files.share(this, Media.saveImage(this, b), Media.mime(b))
-                        }
+                if (kind == Media.KIND_IMAGE) {
+                    showImage(m, b)
+                } else {
+                    val av = Media.avUnwrap(b)
+                    if (av == null) {
+                        toast(tr("Cannot open it", "باز نشد"))
+                    } else if (kind == Media.KIND_AUDIO) {
+                        AvKit.showAudio(this, av.data) { saveBytes(av.data, "Shadow-voice-" + m.ts + "." + AvKit.audioExt(av.data)) }
+                    } else {
+                        AvKit.showVideo(this, av.data) { saveBytes(av.data, "Shadow-video-" + m.ts + ".mp4") }
                     }
-                    .setNegativeButton(tr("Close", "بستن"), null).show()
+                }
             }
         }.start()
+    }
+
+    private fun showImage(m: Msg, b: ByteArray) {
+        val bmp = Media.decodeScaled(b, 2048)
+        if (bmp == null) {
+            toast(tr("Cannot open the image", "تصویر باز نشد"))
+            return
+        }
+        val iv = ImageView(this)
+        iv.setImageBitmap(bmp)
+        iv.adjustViewBounds = true
+        val q = Neo.dp(this, 12)
+        iv.setPadding(q, q, q, q)
+        val ext = when (Media.mime(b)) { "image/png" -> "png"; "image/webp" -> "webp"; else -> "jpg" }
+        Neo.dialog(this).setView(iv)
+            .setPositiveButton(tr("Share…", "ارسال…")) { _, _ ->
+                Dialogs.confirm(this, tr("The shared photo is NOT encrypted. Continue?", "عکسِ ارسالی رمزنگاری نیست. ادامه؟")) {
+                    Files.share(this, Media.saveImage(this, b), Media.mime(b))
+                }
+            }
+            .setNeutralButton(tr("Save…", "ذخیره…")) { _, _ -> saveBytes(b, "Shadow-" + m.ts + "." + ext) }
+            .setNegativeButton(tr("Close", "بستن"), null).show()
     }
 
     // ---------- export ----------
