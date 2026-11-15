@@ -1,31 +1,26 @@
 package com.shadow.society.app
 
-import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 
 /**
- * Step by step: how to build the server on Cloudflare. Written for a child.
- * Way 1: one button (Deploy to Cloudflare). Way 2: by hand (every command has a Copy button).
+ * Server guide. A picture of how it works, two ways to build it (one button / by hand), and a timeline of steps.
+ * Written for a child. Every command has a Copy button.
  */
 class ServerGuideActivity : AppCompatActivity() {
     private var n = 0
 
     private companion object {
-        /** The public GitHub repository with the server files. The button copies it into the user's own accounts. */
-        const val DEPLOY_URL = "https://deploy.workers.cloudflare.com/?url=https://github.com/rahimian2022/shadow-server"
-
         const val SQL1 = "CREATE TABLE inboxes (id TEXT PRIMARY KEY, read_hash TEXT NOT NULL, created INTEGER NOT NULL, rec_hash TEXT, fails INTEGER DEFAULT 0, lock_until INTEGER DEFAULT 0)"
         const val SQL2 = "CREATE TABLE msgs (seq INTEGER PRIMARY KEY AUTOINCREMENT, inbox TEXT NOT NULL, from_id TEXT, mid TEXT, idx INTEGER, total INTEGER, ts INTEGER, data TEXT NOT NULL, created INTEGER NOT NULL)"
         const val SQL3 = "CREATE INDEX idx_msgs ON msgs (inbox, seq)"
@@ -50,73 +45,176 @@ export default { async fetch(req, env) { try { return await route(req, env); } c
 """.trim()
     }
 
-    private fun heading(col: LinearLayout, s: String) {
-        val t = Neo.text(this, s, 12, Neo.ACCENT)
-        t.typeface = Neo.BOLD
-        t.setPadding(0, Neo.dp(this, 20), 0, Neo.dp(this, 2))
-        col.addView(t)
+    private fun dp(v: Int): Int = Neo.dp(this, v)
+
+    // ---------- small building blocks ----------
+    private fun soft(fill: Int, stroke: Int): GradientDrawable = Neo.box(this, fill, stroke, 14)
+
+    /** Colored info box. kind 0 = blue tip, 1 = orange warning, 2 = green good news. Returns the box so more can be added. */
+    private fun tip(col: LinearLayout, kind: Int, title: String, body: String): LinearLayout {
+        val fill = when (kind) { 1 -> 0xFFFFF4E5.toInt(); 2 -> 0xFFE8F5E9.toInt(); else -> 0xFFE8EDFB.toInt() }
+        val line = when (kind) { 1 -> 0xFFF5B041.toInt(); 2 -> 0xFF66BB6A.toInt(); else -> 0xFF9DB1F2.toInt() }
+        val icon = when (kind) { 1 -> "⚠️"; 2 -> "✅"; else -> "💡" }
+        val card = LinearLayout(this)
+        card.orientation = LinearLayout.VERTICAL
+        card.background = soft(fill, line)
+        val p = dp(12)
+        card.setPadding(p, p, p, p)
+        card.addView(Neo.text(this, "$icon  $title", 10, Neo.TEXT).apply { typeface = Neo.BOLD })
+        if (body.isNotEmpty()) card.addView(Neo.text(this, body, 9, Neo.DIM).apply { setPadding(0, dp(4), 0, 0) })
+        Neo.add(col, card, 10)
+        return card
     }
 
-    private fun step(col: LinearLayout, title: String, body: String = "") {
-        n++
-        val card = Neo.card(this)
+    /** A colored section banner with a big emoji. */
+    private fun banner(col: LinearLayout, emoji: String, text: String) {
         val row = LinearLayout(this)
         row.orientation = LinearLayout.HORIZONTAL
-        val sz = Neo.dp(this, 38)
-        val badge = Neo.text(this, "$n", 10, Color.WHITE)
+        row.gravity = Gravity.CENTER_VERTICAL
+        row.background = soft(0xFFE8EDFB.toInt(), 0x00000000)
+        val p = dp(12)
+        row.setPadding(p, dp(10), p, dp(10))
+        row.addView(Neo.text(this, emoji, 14, Neo.TEXT))
+        row.addView(Neo.text(this, text, 11, Neo.ACCENT).apply {
+            typeface = Neo.BOLD
+            setPadding(dp(10), 0, 0, 0)
+        })
+        Neo.add(col, row, 22)
+    }
+
+    /** One step on a vertical timeline: a numbered badge, a line to the next step, and a card. */
+    private fun step(col: LinearLayout, title: String, body: String = "", last: Boolean = false, extra: ((LinearLayout) -> Unit)? = null) {
+        n++
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+
+        val left = FrameLayout(this)
+        if (!last) {
+            val line = View(this)
+            line.setBackgroundColor(Neo.withAlpha(Neo.ACCENT, 70))
+            left.addView(line, FrameLayout.LayoutParams(dp(3), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER_HORIZONTAL))
+        }
+        val sz = dp(34)
+        val badge = Neo.text(this, "$n", 9, Color.WHITE)
         badge.gravity = Gravity.CENTER
         badge.typeface = Neo.BOLD
         badge.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Neo.ACCENT) }
-        row.addView(badge, LinearLayout.LayoutParams(sz, sz))
-        val tc = Neo.vertical(this)
-        tc.addView(Neo.text(this, title, 10, Neo.TEXT).apply { typeface = Neo.BOLD })
-        if (body.isNotEmpty()) {
-            tc.addView(Neo.text(this, body, 9, Neo.DIM).apply { setPadding(0, Neo.dp(this@ServerGuideActivity, 4), 0, 0) })
-        }
+        left.addView(badge, FrameLayout.LayoutParams(sz, sz, Gravity.CENTER_HORIZONTAL or Gravity.TOP))
+        row.addView(left, LinearLayout.LayoutParams(sz, ViewGroup.LayoutParams.MATCH_PARENT))
+
+        val card = Neo.card(this)
+        val cp = dp(12)
+        card.setPadding(cp, cp, cp, cp)
+        card.addView(Neo.text(this, title, 10, Neo.TEXT).apply { typeface = Neo.BOLD })
+        if (body.isNotEmpty()) card.addView(Neo.text(this, body, 9, Neo.DIM).apply { setPadding(0, dp(4), 0, 0) })
+        extra?.invoke(card)
         val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        lp.leftMargin = Neo.dp(this, 12)
-        row.addView(tc, lp)
-        card.addView(row)
-        Neo.add(col, card, 10)
+        lp.leftMargin = dp(10)
+        lp.bottomMargin = dp(10)
+        row.addView(card, lp)
+        col.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     }
 
-    private fun note(col: LinearLayout, title: String, body: String) {
-        val card = Neo.card(this)
-        card.addView(Neo.text(this, title, 10, Neo.ACCENT).apply { typeface = Neo.BOLD })
-        card.addView(Neo.text(this, body, 9, Neo.DIM).apply { setPadding(0, Neo.dp(this@ServerGuideActivity, 4), 0, 0) })
-        Neo.add(col, card, 10)
-    }
-
-    private fun codeBlock(col: LinearLayout, label: String, code: String) {
-        val card = Neo.card(this)
-        card.addView(Neo.text(this, label, 9, Neo.ACCENT).apply { typeface = Neo.BOLD })
+    /** A box with a command and a Copy button. Put it inside a step or a tip. */
+    private fun codeBlock(parent: LinearLayout, label: String, code: String) {
+        parent.addView(Neo.text(this, label, 9, Neo.ACCENT).apply { typeface = Neo.BOLD; setPadding(0, dp(10), 0, dp(4)) })
         val tv = TextView(this)
         tv.text = code
         tv.typeface = Typeface.MONOSPACE
         tv.textSize = 12f
         tv.setTextColor(Neo.TEXT)
-        val p = Neo.dp(this, 8)
+        val p = dp(8)
         tv.setPadding(p, p, p, p)
         val sv = ScrollView(this)
         sv.addView(tv)
         val box = FrameLayout(this)
         box.background = Neo.box(this, Color.WHITE, Neo.BORDER, 10)
-        box.addView(sv, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Neo.dp(this, 120)))
-        Neo.add(card, box, 8)
-        val copy = compact(Neo.primary(this, tr("Copy", "کپی")))
-        Neo.add(card, copy, 8)
+        box.addView(sv, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(110)))
+        Neo.add(parent, box, 0)
+        val copy = compact(Neo.primary(this, "📋 " + tr("Copy", "کپی")))
+        Neo.add(parent, copy, 6)
         copy.setOnClickListener { Neo.copy(this, code) }
-        Neo.add(col, card, 8)
     }
 
-    /** Opens the Cloudflare deploy page in the browser (or copies the link if there is no browser). */
-    private fun openDeploy() {
-        try {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(DEPLOY_URL)))
-        } catch (e: Exception) {
-            Neo.copy(this, DEPLOY_URL)
-            Toast.makeText(this, tr("No browser found. The link was copied: paste it in a browser.", "مرورگر پیدا نشد. لینک کپی شد: در یک مرورگر paste کن."), Toast.LENGTH_LONG).show()
+    /** Makes a random server password (20 letters and numbers) that you can copy. */
+    private fun passwordMaker(parent: LinearLayout) {
+        val shown = Neo.text(this, "— — —", 11, Neo.TEXT)
+        shown.typeface = Typeface.MONOSPACE
+        shown.setTextIsSelectable(true)
+        shown.background = soft(0xFFF2F5FB.toInt(), Neo.BORDER)
+        shown.setPadding(dp(12), dp(10), dp(12), dp(10))
+        shown.gravity = Gravity.CENTER
+        Neo.add(parent, shown, 12)
+        val make = compact(Neo.button(this, "🎲 " + tr("Make a password", "ساخت رمز")))
+        val copy = compact(Neo.primary(this, "📋 " + tr("Copy", "کپی")))
+        Neo.add(parent, formRow(this, make to 1f, copy to 1f), 8)
+        make.setOnClickListener { shown.text = Crypto.randomKey(20) }
+        copy.setOnClickListener {
+            val s = shown.text.toString()
+            if (s.length == 20) Neo.copy(this, s)
         }
+    }
+
+    // ---------- the picture at the top ----------
+    private fun node(emoji: String, caption: String): LinearLayout {
+        val v = LinearLayout(this)
+        v.orientation = LinearLayout.VERTICAL
+        v.gravity = Gravity.CENTER
+        v.background = GradientDrawable().apply { setColor(0x33FFFFFF); cornerRadius = dp(14).toFloat() }
+        v.setPadding(dp(10), dp(8), dp(10), dp(8))
+        v.addView(Neo.text(this, emoji, 16, Color.WHITE).apply { gravity = Gravity.CENTER })
+        v.addView(Neo.text(this, caption, 8, Color.WHITE).apply { gravity = Gravity.CENTER })
+        return v
+    }
+
+    private fun arrow(): TextView {
+        val t = Neo.text(this, "🔒➜", 9, Color.WHITE)
+        t.setPadding(dp(4), 0, dp(4), 0)
+        return t
+    }
+
+    private fun hero(col: LinearLayout) {
+        val card = LinearLayout(this)
+        card.orientation = LinearLayout.VERTICAL
+        card.background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(Neo.ACCENT, 0xFF7C9BFF.toInt()))
+            .apply { cornerRadius = dp(20).toFloat() }
+        val p = dp(18)
+        card.setPadding(p, p, p, p)
+        card.addView(Neo.text(this, tr("Your own private mailbox", "صندوق پستیِ خصوصیِ خودت"), 14, Color.WHITE).apply { typeface = Neo.BOLD })
+        card.addView(Neo.text(this, tr(
+            "Messages are locked on your phone. The server only keeps locked boxes. It can never open them.",
+            "پیام‌ها روی گوشی تو قفل می‌شوند. سرور فقط جعبه‌های قفل‌شده را نگه می‌دارد و هرگز نمی‌تواند بازشان کند."),
+            9, 0xE6FFFFFF.toInt()).apply { setPadding(0, dp(6), 0, dp(14)) })
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.CENTER
+        row.addView(node("📱", tr("You", "تو")))
+        row.addView(arrow())
+        row.addView(node("☁️", tr("Server", "سرور")))
+        row.addView(arrow())
+        row.addView(node("📱", tr("Friend", "دوست")))
+        card.addView(row)
+        Neo.add(col, card, 0)
+    }
+
+    // ---------- the two ways ----------
+    private fun wayCard(col: LinearLayout, emoji: String, title: String, badge: String, needs: String): LinearLayout {
+        val card = Neo.card(this)
+        val top = LinearLayout(this)
+        top.orientation = LinearLayout.HORIZONTAL
+        top.gravity = Gravity.CENTER_VERTICAL
+        top.addView(Neo.text(this, emoji, 16, Neo.TEXT))
+        top.addView(Neo.text(this, title, 12, Neo.TEXT).apply { typeface = Neo.BOLD; setPadding(dp(10), 0, 0, 0) },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        top.addView(Neo.text(this, badge, 8, Neo.ACCENT).apply {
+            typeface = Neo.BOLD
+            background = soft(0xFFE8EDFB.toInt(), 0x00000000)
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+        })
+        card.addView(top)
+        card.addView(Neo.text(this, needs, 9, Neo.DIM).apply { setPadding(0, dp(6), 0, 0) })
+        Neo.add(col, card, 12)
+        return card
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -129,8 +227,8 @@ export default { async fetch(req, env) { try { return await route(req, env); } c
         bar.orientation = LinearLayout.HORIZONTAL
         bar.gravity = Gravity.CENTER_VERTICAL
         bar.setBackgroundColor(Neo.PANEL)
-        bar.elevation = Neo.dp(this, 3).toFloat()
-        val bp = Neo.dp(this, 4)
+        bar.elevation = dp(3).toFloat()
+        val bp = dp(4)
         bar.setPadding(bp, bp, bp, bp)
         bar.addView(Icons.button(this, "back", Neo.BARTEXT) { finish() })
         bar.addView(Neo.text(this, tr("Server guide", "راهنمای سرور"), 12, Neo.BARTEXT).apply { typeface = Neo.BOLD })
@@ -138,153 +236,193 @@ export default { async fetch(req, env) { try { return await route(req, env); } c
 
         val sv = ScrollView(this)
         val col = Neo.vertical(this)
-        val p = Neo.dp(this, 14)
+        val p = dp(14)
         col.setPadding(p, p, p, p * 3)
         sv.addView(col)
         outer.addView(sv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
-        // ---- intro ----
-        note(col, tr("What is a server?", "سرور چیست؟"), tr(
-            "A server is like a MAILBOX on the internet. Your locked messages wait in it until your friend comes and picks them up. It is free. Only ONE of you two has to build it; your friend just gets the address and the password from you and needs no account at all.\n\nWho needs accounts? Only the person who BUILDS a server: a free Cloudflare account and a free GitHub account.",
-            "سرور مثل یک «صندوق پستی» روی اینترنت است. پیام‌های قفل‌شده‌ات آن‌جا می‌مانند تا دوستت بیاید و بردارد. رایگان است. فقط یکی از شما دو نفر باید آن را بسازد؛ دوستت فقط «آدرس» و «رمز» را از تو می‌گیرد و هیچ حسابی لازم ندارد.\n\nچه کسی حساب لازم دارد؟ فقط کسی که سرور را «می‌سازد»: یک حساب رایگان Cloudflare و یک حساب رایگان GitHub."))
+        hero(col)
+        tip(col, 0, tr("Who needs accounts?", "چه کسی حساب لازم دارد؟"), tr(
+            "Only the person who BUILDS a server (a free Cloudflare account, and for the automatic way also a free GitHub account). Your friend just gets the address and the password from you. No account at all.",
+            "فقط کسی که سرور را «می‌سازد» (یک حساب رایگان Cloudflare، و برای راه خودکار یک حساب رایگان GitHub هم). دوستت فقط «آدرس» و «رمز» را از تو می‌گیرد. هیچ حسابی لازم ندارد."))
 
-        // ================= WAY 1: automatic =================
-        heading(col, tr("Way 1 · Automatic (one button, about 5 minutes)", "راه ۱ · خودکار (یک دکمه، حدود ۵ دقیقه)"))
-        val auto = Neo.card(this)
-        auto.addView(Neo.text(this, tr("Cloudflare builds everything by itself: the Worker, the database and its tables.",
-            "Cloudflare خودش همه‌چیز را می‌سازد: Worker، دیتابیس و جدول‌ها."), 10, Neo.TEXT).apply { typeface = Neo.BOLD })
-        val go = Neo.primary(this, tr("Create the server automatically", "ساخت خودکار سرور"))
-        go.textSize = 16f
-        Neo.add(auto, go, 12)
-        go.setOnClickListener { openDeploy() }
-        val cp = compact(Neo.button(this, tr("Copy the link instead", "به‌جایش لینک را کپی کن")))
-        Neo.add(auto, cp, 8)
-        cp.setOnClickListener { Neo.copy(this, DEPLOY_URL) }
-        Neo.add(col, auto, 8)
+        // ================= choose a way =================
+        val manual = Neo.vertical(this)
+        manual.visibility = View.GONE
 
-        step(col, tr("Press the big button above. The browser of your phone opens a Cloudflare page.",
-            "دکمه‌ی بزرگ بالا را بزن. مرورگر گوشی یک صفحه‌ی Cloudflare باز می‌کند."))
-        step(col, tr("Log in to Cloudflare. If you have no account, make one (it is free: email + password, then tap the link in the email). Do the same for GitHub when it asks. When Cloudflare asks to connect GitHub, allow it.",
-            "وارد Cloudflare شو. اگر حساب نداری بساز (رایگان است: ایمیل و رمز، بعد لینک داخل ایمیل را بزن). وقتی GitHub خواست همین کار را بکن. وقتی Cloudflare اجازه‌ی اتصال به GitHub را خواست، قبول کن."))
-        step(col, tr("A form asks for  SERVER_KEY . This is the password of your server. Press the button below to make one, press Copy, and paste it into the form. WRITE IT ON YOUR PAPER: you need it in the app. Do not keep the example text.",
-            "یک فرم می‌آید که  SERVER_KEY  می‌خواهد. این «رمز سرور» توست. دکمه‌ی پایین را بزن تا یک رمز بسازد، «کپی» را بزن و در فرم paste کن. حتماً روی کاغذت بنویس، چون در برنامه لازمش داری. متن نمونه را نگه ندار."))
-        passwordMaker(col)
-        step(col, tr("Leave the other boxes as they are (names like shadow-server and shadow-db). Tap  Deploy  and wait until it says it is done.",
-            "بقیه‌ی کادرها را همان‌طور که هست بگذار (اسم‌هایی مثل shadow-server و shadow-db). دکمه‌ی  Deploy  را بزن و صبر کن تا بنویسد تمام شد."))
-        step(col, tr("Cloudflare shows the address of your server, like  https://shadow-server.something.workers.dev . Press and hold it and copy it. (You can always find it again: Cloudflare menu → Workers & Pages → shadow-server.)",
-            "Cloudflare آدرس سرورت را نشان می‌دهد، شبیه  https://shadow-server.something.workers.dev . انگشتت را روی آن نگه دار و کپی کن. (همیشه می‌توانی دوباره پیدایش کنی: منوی Cloudflare ← Workers & Pages ← shadow-server.)"))
-        step(col, tr("Test it: open a new browser tab, paste the address and write  /ping  at the end. You must see only the word  sh-so . If you see it, everything is right!",
-            "آزمایش: یک تب جدید مرورگر باز کن، آدرس را paste کن و آخرش  /ping  بنویس. باید فقط کلمه‌ی  sh-so  را ببینی. اگر دیدی، همه‌چیز درست است!"))
-        step(col, tr("Back in the app: write the address (without /ping) in \"Server address\" and the password in \"Server password\", then press Register (or, in Online settings, \"Save and register\").",
-            "برگرد به برنامه: آدرس را (بدون /ping) در «آدرس سرور» و رمز را در «رمز سرور» بنویس، بعد «ثبت نام» را بزن (یا در تنظیمات آنلاین «ذخیره و ثبت»)."))
-        step(col, tr("The app shows a RECOVERY CODE (12 letters and numbers). WRITE IT ON YOUR PAPER. If you ever delete and reinstall the app, you need it to take your number back.",
-            "برنامه یک «کد بازیابی» (۱۲ حرف و عدد) نشانت می‌دهد. حتماً روی کاغذت بنویس. اگر روزی برنامه را پاک و دوباره نصب کنی، برای پس گرفتن شماره‌ات لازمش داری."))
-        step(col, tr("For your friend: in Online settings press \"Send my server address\" and send it to him. He pastes it into his app. Then save each other's phone numbers as contacts. Done!",
-            "برای دوستت: در تنظیمات آنلاین «ارسال آدرس سرور من» را بزن و برایش بفرست. او آن را در برنامه‌ی خودش وارد می‌کند. بعد شماره‌ی همدیگر را به‌عنوان مخاطب ذخیره کنید. تمام!"))
+        val a = wayCard(col, "⚡", tr("Automatic", "خودکار"), tr("about 5 minutes", "حدود ۵ دقیقه"),
+            tr("Needs: free Cloudflare + free GitHub account. One button builds everything.",
+                "لازم: حساب رایگان Cloudflare و GitHub. یک دکمه همه‌چیز را می‌سازد."))
+        val go = Neo.primary(this, "🚀 " + tr("Create the server automatically", "ساخت خودکار سرور"))
+        Neo.add(a, go, 12)
+        go.setOnClickListener { ServerSetup.open(this) }
+        val cp = compact(Neo.button(this, "🔗 " + tr("Copy the link", "کپی لینک")))
+        Neo.add(a, cp, 8)
+        cp.setOnClickListener { Neo.copy(this, ServerSetup.DEPLOY_URL) }
 
-        note(col, tr("If the automatic way stops with an error", "اگر راه خودکار با خطا متوقف شد"), tr(
-            "Do not worry. Take a screenshot of the error and use Way 2 below: it does the same by hand and always works.",
-            "نگران نشو. از خطا عکس صفحه بگیر و از راه ۲ (پایین) استفاده کن: همین کار را دستی انجام می‌دهد و همیشه جواب می‌دهد."))
+        val b = wayCard(col, "🛠", tr("By hand", "دستی"), tr("about 20 minutes", "حدود ۲۰ دقیقه"),
+            tr("Needs: only a free Cloudflare account. Works when the automatic way does not.",
+                "لازم: فقط حساب رایگان Cloudflare. وقتی راه خودکار جواب نداد، این جواب می‌دهد."))
+        var open = false
+        val show = compact(Neo.button(this, tr("Show the manual steps  ▾", "نمایش مرحله‌های دستی  ▾")))
+        Neo.add(b, show, 12)
+        show.setOnClickListener {
+            open = !open
+            manual.visibility = if (open) View.VISIBLE else View.GONE
+            show.text = tr("Show the manual steps  ", "نمایش مرحله‌های دستی  ") + (if (open) "▴" else "▾")
+        }
 
-        // ================= WAY 2: by hand =================
+        // ================= automatic steps =================
+        banner(col, "⚡", tr("Automatic: step by step", "خودکار: قدم به قدم"))
         n = 0
-        heading(col, tr("Way 2 · By hand (only Cloudflare needed, no GitHub)", "راه ۲ · دستی (فقط Cloudflare لازم است، بدون GitHub)"))
+        step(col, "🚀 " + tr("Press the big blue button", "دکمه‌ی بزرگ آبی را بزن"),
+            tr("It is at the top (Create the server automatically). The browser of your phone opens a Cloudflare page.",
+                "بالای همین صفحه است (ساخت خودکار سرور). مرورگر گوشی یک صفحه‌ی Cloudflare باز می‌کند."))
+        step(col, "👤 " + tr("Log in", "وارد شو"),
+            tr("Log in to Cloudflare. No account? Make one (free: email + password, then tap the link in the email). Do the same for GitHub when it asks, and allow the connection.",
+                "وارد Cloudflare شو. حساب نداری؟ بساز (رایگان: ایمیل و رمز، بعد لینک داخل ایمیل را بزن). وقتی GitHub خواست همین کار را بکن و اتصال را قبول کن."))
+        step(col, "🔑 " + tr("Type the server password", "رمز سرور را بنویس"),
+            tr("A form asks for SERVER_KEY. Make a password here, copy it, paste it into the form. WRITE IT ON PAPER: you need it in the app. Do not keep the example text.",
+                "یک فرم می‌آید که SERVER_KEY می‌خواهد. همین‌جا یک رمز بساز، کپی کن و در فرم paste کن. حتماً روی کاغذ بنویس: در برنامه لازمش داری. متن نمونه را نگه ندار.")) { passwordMaker(it) }
+        step(col, "▶️ " + tr("Press Deploy", "Deploy را بزن"),
+            tr("Leave the other boxes as they are (names like shadow-server and shadow-db). Tap Deploy and wait until it says it is done.",
+                "بقیه‌ی کادرها را همان‌طور که هست بگذار (اسم‌هایی مثل shadow-server و shadow-db). Deploy را بزن و صبر کن تا بنویسد تمام شد."))
+        step(col, "🔗 " + tr("Copy the server address", "آدرس سرور را کپی کن"),
+            tr("Cloudflare shows it, like https://shadow-server.something.workers.dev. Press and hold it and copy. Lost it? Cloudflare menu → Workers & Pages → shadow-server.",
+                "Cloudflare آن را نشان می‌دهد، شبیه https://shadow-server.something.workers.dev. انگشتت را روی آن نگه دار و کپی کن. گمش کردی؟ منوی Cloudflare ← Workers & Pages ← shadow-server."))
+        step(col, "✅ " + tr("Test it", "آزمایشش کن"),
+            tr("Open a new browser tab, paste the address and write /ping at the end. You must see only the word sh-so. If you see it, the server works!",
+                "یک تب جدید مرورگر باز کن، آدرس را paste کن و آخرش /ping بنویس. باید فقط کلمه‌ی sh-so را ببینی. اگر دیدی، سرور کار می‌کند!"))
+        step(col, "📲 " + tr("Put them in the app", "در برنامه وارد کن"),
+            tr("Address (without /ping) in \"Server address\", password in \"Server password\". Then press Register (or in Online settings: Save and register).",
+                "آدرس (بدون /ping) را در «آدرس سرور» و رمز را در «رمز سرور» بنویس. بعد «ثبت نام» را بزن (یا در تنظیمات آنلاین: ذخیره و ثبت)."))
+        step(col, "🛟 " + tr("Write down the recovery code", "کد بازیابی را یادداشت کن"),
+            tr("The app shows 12 letters and numbers. WRITE THEM ON PAPER. If you ever delete and reinstall the app, you need them to take your number back.",
+                "برنامه ۱۲ حرف و عدد نشانت می‌دهد. روی کاغذ بنویس. اگر روزی برنامه را پاک و دوباره نصب کنی، برای پس گرفتن شماره‌ات لازمشان داری."))
+        step(col, "👥 " + tr("Tell your friend", "به دوستت بگو"),
+            tr("In Online settings press \"Send my server address\" and send it to him. He pastes it into his app. Then save each other's phone numbers as contacts. Done!",
+                "در تنظیمات آنلاین «ارسال آدرس سرور من» را بزن و برایش بفرست. او آن را در برنامه‌ی خودش وارد می‌کند. بعد شماره‌ی همدیگر را به‌عنوان مخاطب ذخیره کنید. تمام!"),
+            last = true)
+        tip(col, 1, tr("The automatic way stopped with an error?", "راه خودکار با خطا متوقف شد؟"),
+            tr("Do not worry. Take a screenshot of the error and use the manual way: it does the same by hand and always works.",
+                "نگران نشو. از خطا عکس صفحه بگیر و از راه دستی استفاده کن: همین کار را با دست انجام می‌دهد و همیشه جواب می‌دهد."))
 
-        // ---- part 1 ----
-        heading(col, tr("Part 1 · Make an account", "بخش ۱ · ساخت حساب"))
-        step(col, tr("Open the web browser of your phone (for example Chrome).", "مرورگر گوشی‌ات را باز کن (مثلاً Chrome)."))
-        step(col, tr("In the address bar at the top type:  dash.cloudflare.com/sign-up  and press Enter (or Go).",
-            "در نوار آدرس بالای صفحه تایپ کن:  dash.cloudflare.com/sign-up  و Enter (یا برو) را بزن."))
-        step(col, tr("Write your email. Choose a password and write it on your paper. Press the button Sign up.",
-            "ایمیلت را بنویس. یک رمز انتخاب کن و روی کاغذت بنویس. دکمه‌ی Sign up را بزن."))
-        step(col, tr("Open your email. There is a letter from Cloudflare. Tap the link inside it (Verify email).",
-            "برو توی ایمیلت. نامه‌ای از Cloudflare آمده. روی لینک داخلش (Verify email) بزن."))
-        step(col, tr("Go back to dash.cloudflare.com and log in. If it asks you to add a domain, you do NOT need one: ignore it. If you cannot see the menu, tap the three lines (☰) at the top. If it asks for a plan, choose Free.",
-            "دوباره برو dash.cloudflare.com و وارد شو. اگر گفت «دامنه اضافه کن» (Add a domain)، ما دامنه نمی‌خواهیم؛ نادیده بگیر. اگر منو دیده نمی‌شود روی علامت سه‌خط (☰) بالای صفحه بزن. اگر پلن پرسید، Free (رایگان) را انتخاب کن."))
+        // ================= manual steps (hidden until you tap "Show") =================
+        col.addView(manual, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        n = 0
+        banner(manual, "🌐", tr("Part 1 · Account", "بخش ۱ · حساب"))
+        step(manual, tr("Open the browser", "مرورگر را باز کن"), tr("For example Chrome.", "مثلاً Chrome."))
+        step(manual, tr("Go to the sign-up page", "برو به صفحه‌ی ثبت‌نام"),
+            tr("In the address bar type dash.cloudflare.com/sign-up and press Enter (or Go).",
+                "در نوار آدرس تایپ کن dash.cloudflare.com/sign-up و Enter (یا برو) را بزن."))
+        step(manual, tr("Make the account", "حساب را بساز"),
+            tr("Write your email. Choose a password and write it on paper. Press Sign up.",
+                "ایمیلت را بنویس. یک رمز انتخاب کن و روی کاغذ بنویس. Sign up را بزن."))
+        step(manual, tr("Check your email", "ایمیلت را ببین"),
+            tr("There is a letter from Cloudflare. Tap the link inside it (Verify email).",
+                "نامه‌ای از Cloudflare آمده. روی لینک داخلش (Verify email) بزن."))
+        step(manual, tr("Log in", "وارد شو"),
+            tr("Go back to dash.cloudflare.com and log in. If it asks to add a domain, you do NOT need one: ignore it. No menu? Tap the three lines (☰). If it asks for a plan, choose Free.",
+                "دوباره برو dash.cloudflare.com و وارد شو. اگر گفت «دامنه اضافه کن»، لازم نیست؛ نادیده بگیر. منو دیده نمی‌شود؟ سه‌خط (☰) را بزن. اگر پلن پرسید، Free را انتخاب کن."),
+            last = true)
 
-        // ---- part 2 ----
-        heading(col, tr("Part 2 · Make the database (the place where messages wait)", "بخش ۲ · ساخت دیتابیس (جایی که پیام‌ها می‌مانند)"))
-        step(col, tr("In the menu tap  Storage & databases , then  D1 SQL database .",
-            "از منو بزن:  Storage & databases  و بعد  D1 SQL database ."))
-        step(col, tr("Tap  Create database . For the name write exactly:  shso  (small letters). Then tap Create.",
-            "دکمه‌ی  Create database  را بزن. اسمش را دقیقاً بنویس:  shso  (حروف کوچک). بعد Create را بزن."))
-        step(col, tr("Tap the name  shso  to open it. At the top tap the tab  Console .",
-            "روی اسم  shso  بزن تا باز شود. بالای صفحه تب  Console  را بزن."))
-        step(col, tr("Now you give it 3 commands, one by one. Below there are 3 boxes. For each box: press Copy here, go to Cloudflare, tap the big box of the Console, paste, then press Execute. Wait until it says success, come back here and take the next box. (If it says \"already exists\" it was made before. No problem.)",
-            "حالا سه دستور را یکی‌یکی به آن می‌دهی. زیر همین مرحله سه کادر هست. برای هر کادر: همین‌جا «کپی» را بزن، برو Cloudflare، توی کادر بزرگ Console بزن و paste کن، بعد دکمه‌ی Execute را بزن. صبر کن بنویسد success، برگرد این‌جا و کادر بعدی را بردار. (اگر نوشت already exists یعنی قبلاً ساخته شده؛ مشکلی نیست.)"))
-        codeBlock(col, tr("Command 1", "دستور ۱"), SQL1)
-        codeBlock(col, tr("Command 2", "دستور ۲"), SQL2)
-        codeBlock(col, tr("Command 3", "دستور ۳"), SQL3)
-        note(col, tr("Already built a server before?", "قبلاً سرور ساخته بودی؟"), tr(
-            "Then your table is old. Do NOT make it again. Give it these 3 upgrade commands instead (one by one, same way). They add the places for the recovery code.",
-            "پس جدولت قدیمی است. دوباره نساز. به‌جایش این ۳ دستور ارتقا را بده (یکی‌یکی، به همان روش). این‌ها جای کد بازیابی را اضافه می‌کنند."))
-        codeBlock(col, tr("Upgrade 1", "ارتقا ۱"), UP1)
-        codeBlock(col, tr("Upgrade 2", "ارتقا ۲"), UP2)
-        codeBlock(col, tr("Upgrade 3", "ارتقا ۳"), UP3)
+        banner(manual, "🗄", tr("Part 2 · Database (where messages wait)", "بخش ۲ · دیتابیس (جایی که پیام‌ها می‌مانند)"))
+        step(manual, tr("Open D1", "D1 را باز کن"),
+            tr("In the menu tap Storage & databases, then D1 SQL database.", "از منو بزن Storage & databases و بعد D1 SQL database."))
+        step(manual, tr("Create the database", "دیتابیس را بساز"),
+            tr("Tap Create database. For the name write exactly shso (small letters). Tap Create.",
+                "Create database را بزن. اسمش را دقیقاً بنویس shso (حروف کوچک). Create را بزن."))
+        step(manual, tr("Open the Console", "Console را باز کن"),
+            tr("Tap the name shso to open it. At the top tap the tab Console.", "روی اسم shso بزن. بالای صفحه تب Console را بزن."))
+        step(manual, tr("Give it 3 commands", "سه دستور را به آن بده"),
+            tr("One by one: press Copy, go to Cloudflare, tap the big Console box, paste, press Execute. Wait for success, come back for the next. (\"already exists\" = made before, no problem.)",
+                "یکی‌یکی: کپی را بزن، برو Cloudflare، توی کادر بزرگ Console بزن و paste کن، Execute را بزن. صبر کن success بنویسد، برگرد برای بعدی. («already exists» یعنی قبلاً ساخته شده، مشکلی نیست.)"),
+            last = true) {
+            codeBlock(it, tr("Command 1", "دستور ۱"), SQL1)
+            codeBlock(it, tr("Command 2", "دستور ۲"), SQL2)
+            codeBlock(it, tr("Command 3", "دستور ۳"), SQL3)
+        }
+        val up = tip(manual, 1, tr("Already built a server before?", "قبلاً سرور ساخته بودی؟"),
+            tr("Then your table is old. Do NOT make it again. Give it these 3 upgrade commands instead (one by one). They add the places for the recovery code.",
+                "پس جدولت قدیمی است. دوباره نساز. به‌جایش این ۳ دستور ارتقا را (یکی‌یکی) بده. این‌ها جای کد بازیابی را اضافه می‌کنند."))
+        codeBlock(up, tr("Upgrade 1", "ارتقا ۱"), UP1)
+        codeBlock(up, tr("Upgrade 2", "ارتقا ۲"), UP2)
+        codeBlock(up, tr("Upgrade 3", "ارتقا ۳"), UP3)
 
-        // ---- part 3 ----
-        heading(col, tr("Part 3 · Make the Worker (the brain of the mailbox)", "بخش ۳ · ساخت Worker (مغز صندوق پستی)"))
-        step(col, tr("In the menu tap  Compute (Workers) , then  Workers & Pages .", "از منو بزن:  Compute (Workers)  و بعد  Workers & Pages ."))
-        step(col, tr("Tap  Create . Choose the template  Hello World . For the name write:  shadow . Then tap Deploy.",
-            "دکمه‌ی  Create  را بزن. قالب  Hello World  را انتخاب کن. اسمش را بنویس:  shadow . بعد Deploy را بزن."))
-        step(col, tr("When it is ready tap the button  Edit code . A page with writing opens.",
-            "وقتی ساخته شد، دکمه‌ی  Edit code  را بزن. یک صفحه‌ی پر از نوشته باز می‌شود."))
-        step(col, tr("Tap inside the writing. Hold your finger, choose Select all, then press the delete key of the keyboard until the page is EMPTY.",
-            "داخل نوشته‌ها بزن. انگشتت را نگه دار و «Select all» را بزن، بعد دکمه‌ی پاک‌کردن کیبورد را بزن تا صفحه کاملاً خالی شود."))
-        step(col, tr("Below is the box \"Worker code\". Press Copy, go to Cloudflare and paste into the empty page. Paste only ONE time.",
-            "زیر همین مرحله کادر «کد Worker» است. «کپی» را بزن، برو Cloudflare و توی صفحه‌ی خالی paste کن. فقط یک بار paste کن."))
-        codeBlock(col, tr("Worker code", "کد Worker"), WORKER)
-        step(col, tr("At the bottom of the page there is an error counter. It must be 0. If it is not 0, delete everything and paste again. When it is 0, tap  Deploy .",
-            "پایین صفحه یک شمارنده‌ی خطا هست. باید صفر باشد. اگر صفر نبود همه را پاک کن و دوباره paste کن. وقتی صفر بود دکمه‌ی  Deploy  را بزن."))
+        n = 0
+        banner(manual, "⚙️", tr("Part 3 · Worker (the brain of the mailbox)", "بخش ۳ · Worker (مغز صندوق پستی)"))
+        step(manual, tr("Open Workers", "Workers را باز کن"),
+            tr("In the menu tap Compute (Workers), then Workers & Pages.", "از منو بزن Compute (Workers) و بعد Workers & Pages."))
+        step(manual, tr("Create it", "بسازش"),
+            tr("Tap Create. Choose the template Hello World. For the name write shadow. Tap Deploy.",
+                "Create را بزن. قالب Hello World را انتخاب کن. اسمش را بنویس shadow. Deploy را بزن."))
+        step(manual, tr("Open the code", "کد را باز کن"),
+            tr("When it is ready tap Edit code. A page with writing opens.", "وقتی ساخته شد Edit code را بزن. یک صفحه‌ی پر از نوشته باز می‌شود."))
+        step(manual, tr("Empty the page", "صفحه را خالی کن"),
+            tr("Tap inside the writing. Hold your finger, choose Select all, then press the delete key until the page is EMPTY.",
+                "داخل نوشته‌ها بزن. انگشتت را نگه دار، Select all را بزن، بعد پاک‌کردن کیبورد را بزن تا صفحه کاملاً خالی شود."))
+        step(manual, tr("Paste the Worker code", "کد Worker را paste کن"),
+            tr("Press Copy, go to Cloudflare and paste into the empty page. Paste only ONE time.",
+                "کپی را بزن، برو Cloudflare و توی صفحه‌ی خالی paste کن. فقط یک بار paste کن.")) {
+            codeBlock(it, tr("Worker code", "کد Worker"), WORKER)
+        }
+        step(manual, tr("Check and Deploy", "بررسی و Deploy"),
+            tr("At the bottom there is an error counter. It must be 0. If not, delete everything and paste again. When it is 0 tap Deploy.",
+                "پایین صفحه یک شمارنده‌ی خطا هست. باید صفر باشد. اگر نبود همه را پاک کن و دوباره paste کن. وقتی صفر بود Deploy را بزن."),
+            last = true)
 
-        // ---- part 4 ----
-        heading(col, tr("Part 4 · Connect the database to the Worker", "بخش ۴ · وصل کردن دیتابیس به Worker"))
-        step(col, tr("Go back to the page of  shadow  (Workers & Pages, then tap shadow). Tap the tab  Settings .",
-            "برگرد به صفحه‌ی  shadow  (از Workers & Pages روی shadow بزن). تب  Settings  را بزن."))
-        step(col, tr("Find  Bindings . Tap  Add . Choose  D1 database .", "بخش  Bindings  را پیدا کن. روی  Add  بزن. گزینه‌ی  D1 database  را انتخاب کن."))
-        step(col, tr("In the box Variable name write exactly:  DB  (two BIG letters). In the database box choose  shso . Then tap Deploy (or Save).",
-            "در کادر Variable name دقیقاً بنویس:  DB  (دو حرف بزرگ). در کادر دیتابیس،  shso  را انتخاب کن. بعد Deploy (یا Save) را بزن."))
+        n = 0
+        banner(manual, "🔌", tr("Part 4 · Connect the database", "بخش ۴ · وصل کردن دیتابیس"))
+        step(manual, tr("Open Settings", "Settings را باز کن"),
+            tr("Go back to the page of shadow (Workers & Pages → shadow). Tap the tab Settings.",
+                "برگرد به صفحه‌ی shadow (Workers & Pages ← shadow). تب Settings را بزن."))
+        step(manual, tr("Add a binding", "یک Binding اضافه کن"),
+            tr("Find Bindings. Tap Add. Choose D1 database.", "بخش Bindings را پیدا کن. Add را بزن. D1 database را انتخاب کن."))
+        step(manual, tr("Name it DB", "اسمش را DB بگذار"),
+            tr("In Variable name write exactly DB (two BIG letters). In the database box choose shso. Tap Deploy (or Save).",
+                "در Variable name دقیقاً بنویس DB (دو حرف بزرگ). در کادر دیتابیس shso را انتخاب کن. Deploy (یا Save) را بزن."),
+            last = true)
 
-        // ---- part 5 ----
-        heading(col, tr("Part 5 · The password of the server", "بخش ۵ · رمز سرور"))
-        step(col, tr("Still in Settings, find  Variables and secrets  and tap  Add .",
-            "هنوز در Settings هستی. بخش  Variables and secrets  را پیدا کن و  Add  را بزن."))
-        step(col, tr("Set Type to  Secret . For Variable name write exactly:  SERVER_KEY  (big letters). For Value you need a password: press the button below to make one, press Copy and paste it. WRITE IT ON YOUR PAPER: you need it in the app. Then tap Deploy.",
-            "Type را روی  Secret  بگذار. در Variable name دقیقاً بنویس:  SERVER_KEY  (حروف بزرگ). برای Value یک رمز لازم است: دکمه‌ی پایین را بزن تا رمز بسازد، «کپی» را بزن و paste کن. حتماً روی کاغذت بنویس، چون در برنامه لازمش داری. بعد Deploy را بزن."))
-        passwordMaker(col)
+        n = 0
+        banner(manual, "🔑", tr("Part 5 · The password of the server", "بخش ۵ · رمز سرور"))
+        step(manual, tr("Add a secret", "یک Secret اضافه کن"),
+            tr("Still in Settings, find Variables and secrets and tap Add.", "هنوز در Settings هستی. Variables and secrets را پیدا کن و Add را بزن."))
+        step(manual, tr("Name it SERVER_KEY", "اسمش را SERVER_KEY بگذار"),
+            tr("Type = Secret. Variable name = SERVER_KEY (big letters). For Value make a password here, copy and paste it. WRITE IT ON PAPER: you need it in the app. Tap Deploy.",
+                "Type را روی Secret بگذار. Variable name را بنویس SERVER_KEY (حروف بزرگ). برای Value همین‌جا یک رمز بساز، کپی و paste کن. روی کاغذ بنویس: در برنامه لازمش داری. Deploy را بزن."),
+            last = true) { passwordMaker(it) }
 
-        // ---- part 6 ----
-        heading(col, tr("Part 6 · The address of the server", "بخش ۶ · آدرس سرور"))
-        step(col, tr("Go to the main page of the Worker (button Overview). You see an address like  https://shadow.something.workers.dev . Press and hold it, and copy it.",
-            "برو به صفحه‌ی اصلی Worker (دکمه‌ی Overview). آدرسی شبیه  https://shadow.something.workers.dev  می‌بینی. انگشتت را روی آن نگه دار و کپی کن."))
-        step(col, tr("Test it: open a new browser tab, paste the address and write  /ping  at the end. You must see only the word  sh-so . If you see it, everything is right! Then go on with the last steps of Way 1 (write the address and password in the app).",
-            "آزمایش: یک تب جدید مرورگر باز کن، آدرس را paste کن و آخرش  /ping  بنویس. باید فقط کلمه‌ی  sh-so  را ببینی. اگر دیدی، همه‌چیز درست است! بعد مرحله‌های آخر راه ۱ را انجام بده (آدرس و رمز را در برنامه بنویس)."))
+        n = 0
+        banner(manual, "🔗", tr("Part 6 · The address", "بخش ۶ · آدرس سرور"))
+        step(manual, tr("Copy the address", "آدرس را کپی کن"),
+            tr("Go to the main page of the Worker (Overview). You see an address like https://shadow.something.workers.dev. Press and hold it and copy.",
+                "برو به صفحه‌ی اصلی Worker (Overview). آدرسی شبیه https://shadow.something.workers.dev می‌بینی. نگهش دار و کپی کن."))
+        step(manual, tr("Test it", "آزمایشش کن"),
+            tr("New tab, paste the address, add /ping at the end. You must see only sh-so. Then continue with the last steps of the automatic way (put them in the app).",
+                "تب جدید، آدرس را paste کن و آخرش /ping بگذار. باید فقط sh-so ببینی. بعد مرحله‌های آخر راه خودکار را انجام بده (در برنامه وارد کن)."),
+            last = true)
 
-        // ---- problems ----
-        heading(col, tr("If something goes wrong", "اگر مشکلی پیش آمد"))
-        note(col, tr("Problems and answers", "مشکل‌ها و جواب‌ها"), tr(
-            "• \"This number is already registered\": you registered before. The app asks for your recovery code. Type it. 5 wrong tries lock it for 15 minutes.\n\n• You lost the recovery code: tap \"I lost the code\" in the app. It gives 2 commands. The owner of the server runs them one by one in D1 → Console. Then you register again.\n\n• \"Not found\": (by hand) check that the binding name is exactly DB (big letters), or run the 3 commands again.\n\n• \"Wrong server key\": the password in the app is not the same as SERVER_KEY in Cloudflare.\n\n• \"No connection\": check your internet. The site workers.dev may be blocked on your network: try a VPN.\n\n• The code page shows an error after pasting: tap the three dots of the browser and choose Desktop site, then paste again.",
-            "• «این شماره قبلاً ثبت شده»: قبلاً ثبت‌نام کرده‌ای. برنامه کد بازیابی‌ات را می‌خواهد. وارد کن. ۵ بار اشتباه = ۱۵ دقیقه قفل.\n\n• کد بازیابی را گم کرده‌ای: در برنامه «کد را گم کرده‌ام» را بزن. دو دستور می‌دهد. صاحب سرور آن‌ها را یکی‌یکی در D1 ← Console اجرا می‌کند. بعد دوباره ثبت‌نام کن.\n\n• «پیدا نشد»: (در راه دستی) اسم DB را دوباره چک کن (حروف بزرگ)، یا سه دستور را دوباره اجرا کن.\n\n• «کلید سرور اشتباه است»: رمز داخل برنامه با SERVER_KEY در Cloudflare یکی نیست.\n\n• «اتصال برقرار نشد»: اینترنتت را چک کن. شاید workers.dev در شبکه‌ات بسته باشد؛ VPN را امتحان کن.\n\n• بعد از paste، صفحه‌ی کد خطا می‌دهد: سه‌نقطه‌ی مرورگر را بزن و Desktop site را انتخاب کن، بعد دوباره paste کن."))
+        // ================= problems =================
+        banner(col, "🧯", tr("If something goes wrong", "اگر مشکلی پیش آمد"))
+        tip(col, 0, tr("\"This number is already registered\"", "«این شماره قبلاً ثبت شده»"),
+            tr("You registered before. The app asks for your recovery code. Type it. 5 wrong tries lock it for 15 minutes.",
+                "قبلاً ثبت‌نام کرده‌ای. برنامه کد بازیابی‌ات را می‌خواهد. وارد کن. ۵ بار اشتباه = ۱۵ دقیقه قفل."))
+        tip(col, 0, tr("I lost the recovery code", "کد بازیابی را گم کرده‌ام"),
+            tr("Tap \"I lost the code\" in the app. It gives 2 commands. The owner of the server runs them one by one in D1 → Console. Then you register again.",
+                "در برنامه «کد را گم کرده‌ام» را بزن. دو دستور می‌دهد. صاحب سرور آن‌ها را یکی‌یکی در D1 ← Console اجرا می‌کند. بعد دوباره ثبت‌نام کن."))
+        tip(col, 0, tr("\"Wrong server key\"", "«کلید سرور اشتباه است»"),
+            tr("The password in the app is not the same as SERVER_KEY in Cloudflare.",
+                "رمز داخل برنامه با SERVER_KEY در Cloudflare یکی نیست."))
+        tip(col, 0, tr("\"Not found\" (manual way)", "«پیدا نشد» (راه دستی)"),
+            tr("Check that the binding name is exactly DB (big letters), or run the 3 commands again.",
+                "اسم DB را دوباره چک کن (حروف بزرگ)، یا سه دستور را دوباره اجرا کن."))
+        tip(col, 0, tr("\"No connection\"", "«اتصال برقرار نشد»"),
+            tr("Check your internet. The site workers.dev may be blocked on your network: try a VPN.",
+                "اینترنتت را چک کن. شاید workers.dev در شبکه‌ات بسته باشد؛ VPN را امتحان کن."))
+        tip(col, 0, tr("The code page shows an error after pasting", "بعد از paste صفحه‌ی کد خطا می‌دهد"),
+            tr("Tap the three dots of the browser and choose Desktop site, then paste again.",
+                "سه‌نقطه‌ی مرورگر را بزن و Desktop site را انتخاب کن، بعد دوباره paste کن."))
 
         setContentView(Neo.backdrop(this, outer))
-    }
-
-    /** Makes a random server password (20 letters and numbers) that you can copy. */
-    private fun passwordMaker(col: LinearLayout) {
-        val card = Neo.card(this)
-        val shown = Neo.text(this, "—", 11, Neo.TEXT)
-        shown.typeface = Typeface.MONOSPACE
-        shown.setTextIsSelectable(true)
-        card.addView(shown)
-        val make = compact(Neo.button(this, tr("Make a server password", "ساخت رمز سرور")))
-        Neo.add(card, make, 8)
-        val copy = compact(Neo.primary(this, tr("Copy", "کپی")))
-        Neo.add(card, copy, 8)
-        make.setOnClickListener { shown.text = Crypto.randomKey(20) }
-        copy.setOnClickListener {
-            val s = shown.text.toString()
-            if (s.length == 20) Neo.copy(this, s)
-        }
-        Neo.add(col, card, 8)
     }
 }
