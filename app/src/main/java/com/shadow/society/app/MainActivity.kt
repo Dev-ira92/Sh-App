@@ -2,7 +2,6 @@ package com.shadow.society.app
 
 import android.content.Intent
 import android.graphics.Color
-import android.graphics.Paint
 import android.graphics.Typeface
 import android.os.Bundle
 import android.os.Handler
@@ -10,6 +9,7 @@ import android.os.Looper
 import android.text.InputType
 import android.text.TextUtils
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.widget.ImageView
@@ -21,8 +21,8 @@ import androidx.appcompat.app.AppCompatActivity
 import java.util.Locale
 
 /**
- * First run: the sign-up page (phone with country code, password + repeat with an eye, my key, optional server,
- * Register). Next runs: the login page (password / PIN / fingerprint, depending on Settings).
+ * First run: the compact sign-up page (language on top, phone with country code, password + repeat with an eye,
+ * my key, optional online section, Register). Next runs: the login page.
  */
 class MainActivity : AppCompatActivity() {
     private val ui = Handler(Looper.getMainLooper())
@@ -64,37 +64,46 @@ class MainActivity : AppCompatActivity() {
         val wrap = LinearLayout(this)
         wrap.gravity = Gravity.CENTER
         wrap.orientation = LinearLayout.VERTICAL
-        val p = Neo.dp(this, 16)
+        val p = Neo.dp(this, 12)
         wrap.setPadding(p, p, p, p)
         val card = Neo.card(this)
+        val cp = Neo.dp(this, 16)
+        card.setPadding(cp, cp, cp, cp)
         wrap.addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         sv.addView(wrap, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         setContentView(Neo.backdrop(this, sv))
         return card
     }
 
-    private fun body(s: String): TextView = Neo.text(this, s, 11, Neo.DIM)
+    private fun body(s: String): TextView = Neo.text(this, s, 10, Neo.DIM)
 
     // ---------- sign up ----------
     private fun buildRegister() {
         val card = shell()
-        card.addView(PulseTitle(this, "Shadow"))
+
+        // top: title + language chips
+        val head = LinearLayout(this)
+        head.orientation = LinearLayout.HORIZONTAL
+        head.gravity = Gravity.CENTER_VERTICAL
+        head.addView(PulseTitle(this, "Shadow", 28f), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(langChips(this))
+        card.addView(head)
         Neo.add(card, body(tr("Create your account. Your phone number is your online ID.",
-            "ثبت‌نام کن. شماره‌ی موبایلت شناسه‌ی آنلاین توست.")), 12)
+            "ثبت‌نام کن. شماره‌ی موبایلت شناسه‌ی آنلاین توست.")), 6)
 
         // phone: country code (pick from the list) + number
         val code = FloatField(this, tr("Country code", "کد کشور")) { Regex("\\+\\d{1,4}").matches(it.trim()) }
         val phone = FloatField(this, tr("Phone number", "شماره تماس")) { Phones.digits(it).length >= 6 }
         phone.edit.inputType = InputType.TYPE_CLASS_PHONE
-        val countryCap = Neo.text(this, "", 10, Neo.DIM)
+        val countryCap = Neo.text(this, "", 8, Neo.DIM)
         fun setCountry(c: Countries.Country) {
             code.edit.setText("+" + c.code)
             countryCap.text = c.flag + "  " + c.name
         }
         code.readOnly { pickCountry(this) { c -> setCountry(c) } }
         setCountry(Countries.find(Locale.getDefault().country) ?: Countries.find("IR")!!)
-        Neo.add(card, formRow(this, code to 0.42f, phone to 0.58f), 14)
-        Neo.add(card, countryCap, 4)
+        Neo.add(card, formRow(this, code to 0.42f, phone to 0.58f), 10)
+        Neo.add(card, countryCap, 2)
 
         // password + repeat (one eye shows / hides both)
         val pass = FloatField(this, tr("Password", "رمز عبور")) { it.length >= 8 }
@@ -106,29 +115,28 @@ class MainActivity : AppCompatActivity() {
             override fun onTextChanged(a: CharSequence?, b: Int, c: Int, d: Int) {}
             override fun afterTextChanged(e: android.text.Editable?) { pass2.refresh() }
         })
-        Neo.add(card, formRow(this, pass to 1f, pass2 to 1f), 12)
-        Neo.add(card, Neo.text(this, tr("At least 8 characters. Tap the eye to see them.", "حداقل ۸ کاراکتر. با زدن چشم رمز را ببین."), 9, Neo.DIM), 4)
+        Neo.add(card, formRow(this, pass to 1f, pass2 to 1f), 8)
 
         // my key: created here, one line shown
         var key = keepKey ?: Crypto.hex(Crypto.random(32))
         keepKey = key
-        Neo.add(card, Neo.text(this, tr("My key", "کلید من"), 12, Neo.ACCENT).apply { typeface = Neo.BOLD }, 16)
+        Neo.add(card, Neo.text(this, tr("My key", "کلید من"), 9, Neo.ACCENT).apply { typeface = Neo.BOLD }, 12)
         val keyView = TextView(this)
         keyView.typeface = Typeface.MONOSPACE
-        keyView.textSize = 15f * (Neo.fs / 1.5f)
+        keyView.textSize = 14f * (Neo.fs / 1.5f)
         keyView.setTextColor(Neo.TEXT)
         keyView.setSingleLine(true)
         keyView.ellipsize = TextUtils.TruncateAt.MIDDLE
         keyView.background = Neo.box(this, Color.WHITE, Neo.BORDER, 10)
-        val kp = Neo.dp(this, 12)
+        val kp = Neo.dp(this, 10)
         keyView.setPadding(kp, kp, kp, kp)
         keyView.text = key
-        Neo.add(card, keyView, 6)
+        Neo.add(card, keyView, 4)
 
-        val create = Neo.button(this, tr("Create", "ایجاد"))
-        val copy = Neo.button(this, tr("Copy", "کپی"))
-        val send = Neo.button(this, tr("Send", "ارسال"))
-        Neo.add(card, formRow(this, create to 1f, copy to 1f, send to 1f), 8)
+        val create = compact(Neo.button(this, tr("Create", "ایجاد")))
+        val copy = compact(Neo.button(this, tr("Copy", "کپی")))
+        val send = compact(Neo.button(this, tr("Send", "ارسال")))
+        Neo.add(card, formRow(this, create to 1f, copy to 1f, send to 1f), 6)
         create.setOnClickListener {
             key = Crypto.hex(Crypto.random(32))
             keepKey = key
@@ -137,30 +145,47 @@ class MainActivity : AppCompatActivity() {
         copy.setOnClickListener { Neo.copy(this, key) }
         send.setOnClickListener { sendDialog(key) }
 
-        // online (optional)
-        Neo.add(card, Neo.text(this, tr("Online (optional)", "آنلاین (اختیاری)"), 12, Neo.ACCENT).apply { typeface = Neo.BOLD }, 20)
-        Neo.add(card, body(tr("To chat online and use all the features, enter the server address and the server password.",
-            "برای ارتباط آنلاین و استفاده از تمام قابلیت‌ها، آدرس سرور و رمز سرور را وارد کنید.")), 4)
+        // online (optional, folded)
+        var arrowOpen = false
+        val toggle = compact(Neo.button(this, tr("Online (optional)  ▾", "آنلاین (اختیاری)  ▾")))
+        Neo.add(card, toggle, 12)
+        val onlineBox = Neo.vertical(this)
+        onlineBox.visibility = View.GONE
+        Neo.add(onlineBox, body(tr("To chat online and use all the features, enter the server address and the server password.",
+            "برای ارتباط آنلاین و استفاده از تمام قابلیت‌ها، آدرس سرور و رمز سرور را وارد کنید.")), 8)
         val srvUrl = FloatField(this, tr("Server address", "آدرس سرور")) { OnlineParse.cleanUrl(it) != null }
         srvUrl.edit.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
         val srvKey = FloatField(this, tr("Server password", "رمز سرور")) { s ->
             val t = s.trim()
             t.length >= 8 && t.none { it.isWhitespace() || it == '|' }
         }.password()
-        Neo.add(card, srvUrl, 10)
-        Neo.add(card, srvKey, 10)
-        val guide = Neo.button(this, tr("Server guide", "راهنمای سرور"))
-        Neo.add(card, guide, 10)
+        Neo.add(onlineBox, srvUrl, 8)
+        Neo.add(onlineBox, srvKey, 8)
+
+        // no server yet? build one with one button, or read the guide
+        Neo.add(onlineBox, body(tr("No server yet?", "هنوز سرور نداری؟")), 10)
+        val build = compact(Neo.primary(this, "🚀 " + tr("Create server", "ساخت سرور")))
+        val guide = compact(Neo.button(this, "📖 " + tr("Guide", "راهنما")))
+        Neo.add(onlineBox, formRow(this, build to 1f, guide to 1f), 6)
+        build.setOnClickListener { ServerSetup.open(this) }
         guide.setOnClickListener { startActivity(Intent(this, ServerGuideActivity::class.java)) }
+
+        Neo.add(card, onlineBox, 0)
+        toggle.setOnClickListener {
+            arrowOpen = !arrowOpen
+            onlineBox.visibility = if (arrowOpen) View.VISIBLE else View.GONE
+            toggle.text = tr("Online (optional)  ", "آنلاین (اختیاری)  ") + (if (arrowOpen) "▴" else "▾")
+        }
 
         // register
         val reg = Neo.primary(this, tr("Register", "ثبت نام"))
-        reg.textSize = 20f
-        val rp = Neo.dp(this, 14)
+        reg.textSize = 18f
+        val rp = Neo.dp(this, 12)
         reg.setPadding(rp, rp, rp, rp)
-        Neo.add(card, reg, 20)
-        status = Neo.text(this, "", 10, Neo.DIM)
-        Neo.add(card, status, 8)
+        Neo.add(card, reg, 14)
+        status = Neo.text(this, "", 9, Neo.DIM)
+        status.gravity = Gravity.CENTER
+        Neo.add(card, status, 6)
 
         reg.setOnClickListener {
             val c = code.text().trim()
@@ -185,26 +210,13 @@ class MainActivity : AppCompatActivity() {
             pass2.bad(pw != pass2.text())
             srvUrl.bad(wantsServer && url == null)
             srvKey.bad(wantsServer && !keyOk)
-            if (e != null) err(e)
-            else register(pw, c + num.trimStart('0'), key, if (wantsServer && url != null) ServerInfo(url, sk) else null)
-        }
-
-        // language links
-        val langRow = LinearLayout(this)
-        langRow.gravity = Gravity.CENTER
-        for ((i, pair) in listOf("fa" to "فارسی", "en" to "English").withIndex()) {
-            if (i > 0) langRow.addView(Neo.text(this, "  |  ", 10, Neo.DIM))
-            val tv = Neo.text(this, pair.second, 10, Neo.ACCENT)
-            if (Lang.code == pair.first) tv.paintFlags = tv.paintFlags or Paint.UNDERLINE_TEXT_FLAG
-            tv.setOnClickListener {
-                Prefs.putStr(this, "lang", pair.first)
-                Prefs.putInt(this, "lang_sys", 0)
-                Neo.changed(this)
-                recreate()
+            if (e != null) {
+                if (wantsServer && onlineBox.visibility != View.VISIBLE) toggle.performClick()
+                err(e)
+            } else {
+                register(pw, c + num.trimStart('0'), key, if (wantsServer && url != null) ServerInfo(url, sk) else null)
             }
-            langRow.addView(tv)
         }
-        Neo.add(card, langRow, 16)
     }
 
     private fun register(pw: String, phone: String, key: String, server: ServerInfo?) {
@@ -278,11 +290,12 @@ class MainActivity : AppCompatActivity() {
     // ---------- login ----------
     private fun buildLogin() {
         val card = shell()
-        card.addView(PulseTitle(this, "Shadow"))
-        Neo.add(card, body(LockType.loginHint(type)), 12)
+        card.addView(PulseTitle(this, "Shadow", 28f))
+        Neo.add(card, body(LockType.loginHint(type)), 6)
         val holder = Neo.vertical(this)
-        Neo.add(card, holder, 14)
-        status = Neo.text(this, "", 10, Neo.DIM)
+        Neo.add(card, holder, 12)
+        status = Neo.text(this, "", 9, Neo.DIM)
+        status.gravity = Gravity.CENTER
 
         when (type) {
             LockType.PASS -> {
@@ -291,15 +304,15 @@ class MainActivity : AppCompatActivity() {
                 passField = f
                 Neo.add(holder, f, 0)
                 val b = Neo.primary(this, tr("Log in", "ورود"))
-                b.textSize = 20f
-                Neo.add(holder, b, 14)
+                b.textSize = 18f
+                Neo.add(holder, b, 12)
                 val go = { val s = f.text(); if (s.isNotEmpty()) attempt(s) }
                 b.setOnClickListener { go() }
                 f.edit.setOnEditorActionListener { _, _, _ -> go(); true }
             }
             LockType.BIO -> {
                 val b = Neo.primary(this, tr("Unlock", "باز کردن"))
-                b.textSize = 20f
+                b.textSize = 18f
                 Neo.add(holder, b, 4)
                 b.setOnClickListener { askBio() }
                 askBio()
@@ -310,7 +323,7 @@ class MainActivity : AppCompatActivity() {
                 holder.addView(p.view, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             }
         }
-        Neo.add(card, status, 10)
+        Neo.add(card, status, 8)
     }
 
     private fun askBio() {
